@@ -10,7 +10,7 @@ from torch import Tensor
 import torch.nn.functional as F
 
 from joeynmt.initialization import initialize_model
-from joeynmt.embeddings import Embeddings
+from joeynmt.embeddings import Embeddings, PretrainedEmbeddings
 from joeynmt.encoders import Encoder, RecurrentEncoder, TransformerEncoder
 from joeynmt.decoders import Decoder, RecurrentDecoder, TransformerDecoder
 from joeynmt.constants import PAD_TOKEN, EOS_TOKEN, BOS_TOKEN
@@ -230,12 +230,12 @@ class UnsupervisedNMTModel(nn.Module):
         self.current_decoder = None
         self.src_vocab = src_vocab
         self.trg_vocab = trg_vocab
-        self.src_specials = {BOS_TOKEN: self.src_vocab.stoi[BOS_TOKEN],
-                             PAD_TOKEN: self.src_vocab.stoi[PAD_TOKEN],
-                             EOS_TOKEN: self.src_vocab.stoi[EOS_TOKEN]}
-        self.trg_specials = {BOS_TOKEN: self.trg_vocab.stoi[BOS_TOKEN],
-                             PAD_TOKEN: self.trg_vocab.stoi[PAD_TOKEN],
-                             EOS_TOKEN: self.trg_vocab.stoi[EOS_TOKEN]}
+        self.src_bos_index = self.src_vocab.stoi[BOS_TOKEN]
+        self.src_pad_index = self.src_vocab.stoi[PAD_TOKEN]
+        self.src_eos_index = self.src_vocab.stoi[EOS_TOKEN]
+        self.trg_bos_index = self.trg_vocab.stoi[BOS_TOKEN]
+        self.trg_pad_index = self.trg_vocab.stoi[PAD_TOKEN]
+        self.trg_eos_index = self.trg_vocab.stoi[EOS_TOKEN]
 
     def set_current_encoder_embeddings(self, encode_mode: str):
         if encode_mode == "src":
@@ -335,20 +335,25 @@ class UnsupervisedNMTModel(nn.Module):
         if max_output_length is None:
             max_output_length = int(max(batch.src_lengths.cpu().numpy()) * 1.5)
 
+        # get current decoder and special symbol idxs
         if self.current_decoder == self.src_decoder:  # current target is source language
             current_trg_embed = self.src_embed
-            current_trg_specials = self.src_specials
+            bos_index = self.src_bos_index
+            pad_index = self.src_pad_index
+            eos_index = self.src_eos_index
         else:  # current target is target language
             current_trg_embed = self.trg_embed
-            current_trg_specials = self.trg_specials
+            bos_index = self.trg_bos_index
+            pad_index = self.trg_pad_index
+            eos_index = self.trg_eos_index
 
         # greedy decoding
         if beam_size < 2:
             stacked_output, stacked_attention_scores = greedy(
                     encoder_hidden=encoder_hidden,
-                    encoder_output=encoder_output, eos_index=current_trg_specials[EOS_TOKEN],
+                    encoder_output=encoder_output, eos_index=eos_index,
                     src_mask=batch.src_mask, embed=current_trg_embed,
-                    bos_index=current_trg_specials[BOS_TOKEN], decoder=self.current_decoder,
+                    bos_index=bos_index, decoder=self.current_decoder,
                     max_output_length=max_output_length)
             # batch, time, max_src_length
         else:  # beam size
@@ -358,9 +363,9 @@ class UnsupervisedNMTModel(nn.Module):
                         encoder_hidden=encoder_hidden,
                         src_mask=batch.src_mask, embed=current_trg_embed,
                         max_output_length=max_output_length,
-                        alpha=beam_alpha, eos_index=current_trg_specials[EOS_TOKEN],
-                        pad_index=current_trg_specials[PAD_TOKEN],
-                        bos_index=current_trg_specials[BOS_TOKEN],
+                        alpha=beam_alpha, eos_index=eos_index,
+                        pad_index=pad_index,
+                        bos_index=bos_index,
                         decoder=self.current_decoder)
 
         return stacked_output, stacked_attention_scores
@@ -477,7 +482,7 @@ def build_encoder_decoder_model(cfg: dict = None,
 
 def build_unsupervised_nmt_model(cfg: dict = None,
                                  src_vocab: Vocabulary = None,
-                                 trg_vocab: Vocabulary = None) -> Model:
+                                 trg_vocab: Vocabulary = None) -> UnsupervisedNMTModel:
     """
     TODO
     """
@@ -485,12 +490,14 @@ def build_unsupervised_nmt_model(cfg: dict = None,
     trg_padding_idx = trg_vocab.stoi[PAD_TOKEN]
 
     # build source and target embedding layers
-    src_embed = Embeddings(**cfg["encoder"]["embeddings"],
-                           vocab_size=len(src_vocab),
-                           padding_idx=src_padding_idx)
-    trg_embed = Embeddings(**cfg["decoder"]["embeddings"],
-                           vocab_size=len(trg_vocab),
-                           padding_idx=trg_padding_idx)
+    src_embed = PretrainedEmbeddings(**cfg["encoder"]["embeddings"],
+                                     vocab_size=len(src_vocab),
+                                     padding_idx=src_padding_idx,
+                                     vocab=src_vocab)
+    trg_embed = PretrainedEmbeddings(**cfg["decoder"]["embeddings"],
+                                     vocab_size=len(trg_vocab),
+                                     padding_idx=trg_padding_idx,
+                                     vocab=trg_vocab)
 
     # build shared encoder
     enc_dropout = cfg["encoder"].get("dropout", 0.)
@@ -530,6 +537,9 @@ def build_unsupervised_nmt_model(cfg: dict = None,
                                  shared_encoder,
                                  src_decoder, trg_decoder,
                                  src_vocab, trg_vocab)
-    # initialise model
-    # TODO: Initialisers shouldn't overwrite model
+
+    # initialise model, embed_initializer should be none
+    # so loaded embeddings won't be overwritten
+    initialize_model(model, cfg, src_padding_idx, trg_padding_idx)
+
     return model
