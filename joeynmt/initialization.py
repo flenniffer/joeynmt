@@ -120,6 +120,9 @@ def initialize_model(model: nn.Module, cfg: dict, src_padding_idx: int,
             return lambda p: nn.init.normal_(p, mean=0., std=scale)
         elif s.lower() == "zeros":
             return lambda p: nn.init.zeros_(p)
+        # no initialisation so embeddings are not overwritten
+        elif s.lower() == "none":
+            return lambda p: p
         else:
             raise ValueError("unknown initializer")
 
