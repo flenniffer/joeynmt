@@ -1,6 +1,12 @@
 import math
+
+from numpy import zeros, asarray
+
 from torch import nn, Tensor, from_numpy
+
 from joeynmt.helpers import freeze_params
+from joeynmt.vocabulary import Vocabulary
+from joeynmt.constants import UNK_TOKEN
 
 
 class Embeddings(nn.Module):
@@ -16,7 +22,6 @@ class Embeddings(nn.Module):
                  vocab_size: int = 0,
                  padding_idx: int = 1,
                  freeze: bool = False,
-                 embed_file: str = "",
                  **kwargs):
         """
         Create new embeddings for the vocabulary.
@@ -35,8 +40,6 @@ class Embeddings(nn.Module):
         self.vocab_size = vocab_size
         self.lut = nn.Embedding(vocab_size, self.embedding_dim,
                                 padding_idx=padding_idx)
-        if embed_file is not "":
-            self.load_embeddings_from_file(embed_file)
 
         if freeze:
             freeze_params(self)
@@ -53,16 +56,50 @@ class Embeddings(nn.Module):
             return self.lut(x) * math.sqrt(self.embedding_dim)
         return self.lut(x)
 
-    def load_embeddings_from_file(self, embed_file: str) -> None:
-        """
-        Creates an Embedding layer from the embeddings specified in the embedding file
-
-        :param embed_file: path to file containing token and embedding, one per line
-        :return: Embedding tensor
-        """
-        loaded_embeds = nn.Embedding()
-        self.lut.weight.data.copy_(from_numpy(loaded_embeds))
-
     def __repr__(self):
         return "%s(embedding_dim=%d, vocab_size=%d)" % (
             self.__class__.__name__, self.embedding_dim, self.vocab_size)
+
+
+class PretrainedEmbeddings(Embeddings):
+
+    """
+    Loads embeddings from an embeddings file.
+    """
+    def __init__(self,
+                 embed_file: str,
+                 vocab: Vocabulary,
+                 embedding_dim: int = 64,
+                 scale: bool = False,
+                 vocab_size: int = 0,
+                 padding_idx: int = 1,
+                 freeze: bool = False,
+                 **kwargs):
+        super(PretrainedEmbeddings, self).__init__(embedding_dim, scale, vocab_size, padding_idx, freeze, **kwargs)
+        self.load_embeddings_from_file(embed_file, vocab)
+
+    def load_embeddings_from_file(self, embed_file: str, vocab: Vocabulary) -> None:
+        """
+        Overwrites the initial Embedding Tensor with the embeddings from the embedding file.
+        Tokens without a specified embedding are initialised with zeros.
+
+        :param embed_file: path to file containing token and embedding, one per line, separated by space
+        :param vocab: the vocabulary of the language of the embeddings
+        """
+        loaded_embeds = zeros((self.vocab_size, self.embedding_dim), dtype=float)
+        with open(embed_file, "r") as open_file:
+            for line in open_file:
+                line = line.strip()
+                if line != "":
+                    token, embedding_str = line.split(sep=" ", maxsplit=1)
+                    idx = vocab.stoi.get(token, None)  # get index of token in vocabulary
+                    if idx is None:  # token is not in vocabulary
+                        continue
+                    embedding = asarray(embedding_str.split(" "), dtype=float)
+                    assert embedding.shape[0] == self.embedding_dim, "Dimensionality of loaded embedding does not match"
+                    loaded_embeds[idx] = embedding  # replace zeros at idx with correct embedding
+
+        # TODO: initialise special symbols
+        unk_idx = vocab.stoi[UNK_TOKEN]
+        # overwrite Embedding Tensor
+        self.lut.weight.data.copy_(from_numpy(loaded_embeds))
