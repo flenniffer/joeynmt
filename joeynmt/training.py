@@ -25,7 +25,7 @@ from joeynmt.batch import Batch
 from joeynmt.helpers import log_data_info, load_config, log_cfg, \
     store_attention_plots, load_checkpoint, make_model_dir, \
     make_logger, set_seed, symlink_update, ConfigurationError
-from joeynmt.model import Model
+from joeynmt.model import Model, UnsupervisedNMTModel
 from joeynmt.prediction import validate_on_data
 from joeynmt.loss import XentLoss
 from joeynmt.data import load_data, make_data_iter
@@ -34,17 +34,13 @@ from joeynmt.builders import build_optimizer, build_scheduler, \
 from joeynmt.prediction import test
 
 
-# pylint: disable=too-many-instance-attributes
-class TrainManager:
-    """ Manages training loop, validations, learning rate scheduling
-    and early stopping."""
-
-    def __init__(self, model: Model, config: dict) -> None:
+class BaseTrainManager:
+    """
+    TODO
+    """
+    def __init__(self, model: torch.nn.Module, config: dict):
         """
-        Creates a new TrainManager for a model, specified as in configuration.
-
-        :param model: torch module defining the model
-        :param config: dictionary containing the training configurations
+        TODO
         """
         train_config = config["training"]
 
@@ -58,16 +54,10 @@ class TrainManager:
         self.tb_writer = SummaryWriter(
             log_dir=self.model_dir + "/tensorboard/")
 
-        # model
+        # model - needs to be overwritten by subclass
         self.model = model
-        self.pad_index = self.model.pad_index
-        self.bos_index = self.model.bos_index
-        self._log_parameters_list()
 
-        # objective
-        self.label_smoothing = train_config.get("label_smoothing", 0.0)
-        self.loss = XentLoss(pad_index=self.pad_index,
-                             smoothing=self.label_smoothing)
+        # normalization
         self.normalization = train_config.get("normalization", "batch")
         if self.normalization not in ["batch", "tokens", "none"]:
             raise ConfigurationError("Invalid normalization option."
@@ -80,6 +70,7 @@ class TrainManager:
         self.clip_grad_fun = build_gradient_clipper(config=train_config)
         self.optimizer = build_optimizer(config=train_config,
                                          parameters=model.parameters())
+        self.label_smoothing = train_config.get("label_smoothing", 0.0)
 
         # validation & early stopping
         self.validation_freq = train_config.get("validation_freq", 1000)
@@ -142,9 +133,6 @@ class TrainManager:
 
         # CPU / GPU
         self.use_cuda = train_config["use_cuda"]
-        if self.use_cuda:
-            self.model.cuda()
-            self.loss.cuda()
 
         # initialize accumalted batch loss (needed for batch_multiplier)
         self.norm_batch_loss_accumulated = 0
@@ -171,6 +159,10 @@ class TrainManager:
                                       reset_best_ckpt=reset_best_ckpt,
                                       reset_scheduler=reset_scheduler,
                                       reset_optimizer=reset_optimizer)
+
+    def train_and_validate(self, train_data: Dataset, valid_data: Dataset) \
+            -> None:
+        raise NotImplementedError("Subclass of BaseTrainManager has to implement custom training procedure.")
 
     def _save_checkpoint(self) -> None:
         """
@@ -263,6 +255,49 @@ class TrainManager:
         # move parameters to cuda
         if self.use_cuda:
             self.model.cuda()
+
+    def _log_parameters_list(self) -> None:
+        """
+        Write all model parameters (name, shape) to the log.
+        """
+        model_parameters = filter(lambda p: p.requires_grad,
+                                  self.model.parameters())
+        n_params = sum([np.prod(p.size()) for p in model_parameters])
+        self.logger.info("Total params: %d", n_params)
+        trainable_params = [n for (n, p) in self.model.named_parameters()
+                            if p.requires_grad]
+        self.logger.info("Trainable parameters: %s", sorted(trainable_params))
+        assert trainable_params
+
+
+# pylint: disable=too-many-instance-attributes
+class TrainManager(BaseTrainManager):
+    """ Manages training loop, validations, learning rate scheduling
+    and early stopping."""
+
+    def __init__(self, model: Model, config: dict) -> None:
+        """
+        Creates a new TrainManager for a model, specified as in configuration.
+
+        :param model: torch module defining the model
+        :param config: dictionary containing the training configurations
+        """
+        super(TrainManager, self).__init__(model, config)
+        train_config = config["training"]
+
+        # model
+        self.pad_index = self.model.pad_index
+        self.bos_index = self.model.bos_index
+        self._log_parameters_list()
+
+        # objective
+        self.loss = XentLoss(pad_index=self.pad_index,
+                             smoothing=self.label_smoothing)
+
+        # CPU / GPU
+        if self.use_cuda:
+            self.model.cuda()
+            self.loss.cuda()
 
     # pylint: disable=unnecessary-comprehension
     # pylint: disable=too-many-branches
@@ -552,19 +587,6 @@ class TrainManager:
                     self.steps, valid_loss, valid_ppl, eval_metric,
                     valid_score, current_lr, "*" if new_best else ""))
 
-    def _log_parameters_list(self) -> None:
-        """
-        Write all model parameters (name, shape) to the log.
-        """
-        model_parameters = filter(lambda p: p.requires_grad,
-                                  self.model.parameters())
-        n_params = sum([np.prod(p.size()) for p in model_parameters])
-        self.logger.info("Total params: %d", n_params)
-        trainable_params = [n for (n, p) in self.model.named_parameters()
-                            if p.requires_grad]
-        self.logger.info("Trainable parameters: %s", sorted(trainable_params))
-        assert trainable_params
-
     def _log_examples(self, sources: List[str], hypotheses: List[str],
                       references: List[str],
                       sources_raw: List[List[str]] = None,
@@ -609,6 +631,57 @@ class TrainManager:
         with open(current_valid_output_file, 'w') as opened_file:
             for hyp in hypotheses:
                 opened_file.write("{}\n".format(hyp))
+
+
+class UnsupervisedNMTTrainManager(BaseTrainManager):
+    """
+    Manages training loop, validation, learning rate scheduling and early stopping
+    for the unsupervised scenario as described in
+    Artetxe et al. (2018): Unsupervised Neural Machine Translation
+    """
+    def __init__(self, model: UnsupervisedNMTModel, config: dict):
+        """
+        Creates a new manager for an UnsupervisedNMTModel, as specified in the given
+        configuration.
+        :param model: UnsupervisedNMTModel defining the model
+        :param config: dictionary containing the configuration
+        """
+        super(UnsupervisedNMTTrainManager, self).__init__(model=model, config=config)
+        train_config = config["training"]
+
+        # model
+        self.src_pad_index = self.model.src_pad_index
+        self.src_bos_index = self.model.src_bos_index
+        self.trg_pad_index = self.model.trg_pad_index
+        self.trg_bos_index = self.model.trg_bos_index
+        self._log_parameters_list()
+
+        # objective
+        # define loss for all translation directions
+        self.src2src_loss = XentLoss(pad_index=self.src_pad_index,
+                                     smoothing=self.label_smoothing)
+        self.src2trg_loss = XentLoss(pad_index=self.trg_pad_index,
+                                     smoothing=self.label_smoothing)
+        self.trg2src_loss = XentLoss(pad_index=self.src_pad_index,
+                                     smoothing=self.label_smoothing)
+        self.trg2trg_loss = XentLoss(pad_index=self.trg_pad_index,
+                                     smoothing=self.label_smoothing)
+
+        # CPU / GPU
+        if self.use_cuda:
+            self.model.cuda()
+            self.src2src_loss.cuda()
+            self.src2trg_loss.cuda()
+            self.trg2src_loss.cuda()
+            self.trg2trg_loss.cuda()
+
+    def train_and_validate(self, train_data: Dataset, valid_data: Dataset) \
+            -> None:
+        """
+        TODO
+        :param train_data:
+        :param valid_data:
+        """
 
 
 def train(cfg_file: str) -> None:
