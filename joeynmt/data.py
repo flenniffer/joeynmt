@@ -115,6 +115,81 @@ def load_data(data_cfg: dict) -> (Dataset, Dataset, Optional[Dataset],
     return train_data, dev_data, test_data, src_vocab, trg_vocab
 
 
+def load_unsupervised_data(data_cfg: dict) \
+        -> (Dataset, Dataset, Dataset, Dataset,
+            Dataset, Dataset,
+            Optional[Dataset], Optional[Dataset],
+            Vocabulary, Vocabulary):
+    """
+    :param data_cfg: configuration dictionary for data
+    :return:
+        - src2src:
+        - trg2trg:
+        - src2trg:
+        - trg2src:
+        - test_src2trg:
+        - test_trg2src:
+        - dev_src2trg:
+        - dev_trg2src:
+        - src_vocab:
+        - trg_vocab:
+    """
+    src_lang = data_cfg["src"]
+    trg_lang = data_cfg["trg"]
+    noised_ext = data_cfg["noised"]
+    denoised_ext = data_cfg["denoised"]
+    assert noised_ext != denoised_ext
+    train_path = data_cfg["train"]
+    dev_path = data_cfg["dev"]
+    test_path = data_cfg.get("test", None)
+    level = data_cfg["level"]
+    lowercase = data_cfg["lowercase"]
+    max_sent_length = data_cfg["max_sent_length"]
+
+    tok_fun = lambda s: list(s) if level == "char" else s.split()
+
+    src_field = data.Field(init_token=None, eos_token=EOS_TOKEN,
+                           pad_token=PAD_TOKEN, tokenize=tok_fun,
+                           batch_first=True, lower=lowercase,
+                           unk_token=UNK_TOKEN,
+                           include_lengths=True)
+
+    trg_field = data.Field(init_token=BOS_TOKEN, eos_token=EOS_TOKEN,
+                           pad_token=PAD_TOKEN, tokenize=tok_fun,
+                           unk_token=UNK_TOKEN,
+                           batch_first=True, lower=lowercase,
+                           include_lengths=True)
+
+    # datasets for denoising
+    # 'translate' from noised input to denoised output
+    src2src = TranslationDataset(path=train_path,
+                                 exts=("." + noised_ext + "." + src_lang,
+                                       "." + denoised_ext + "." + src_lang),
+                                 fields=(src_field, trg_field),
+                                 filter_pred=
+                                 lambda x: len(vars(x)['src']) <= max_sent_length
+                                 and len(vars(x)['trg']) <= max_sent_length)
+
+    trg2trg = TranslationDataset(path=train_path,
+                                 exts=("." + noised_ext + "." + trg_lang,
+                                       "." + denoised_ext + "." + trg_lang),
+                                 fields=(src_field, trg_field),
+                                 filter_pred=
+                                 lambda x: len(vars(x)['src']) <= max_sent_length
+                                 and len(vars(x)['trg']) <= max_sent_length)
+
+    # datasets for BT TODO
+    # need only denoised data in order to back-translate on-the-fly
+    # the use (BT, denoised data) tuples as training examples
+    src2trg = Dataset()
+    trg2src = Dataset()
+
+    src_max_size = data_cfg.get("src_voc_limit", sys.maxsize)
+    src_min_freq = data_cfg.get("src_voc_min_freq", 1)
+    trg_max_size = data_cfg.get("trg_voc_limit", sys.maxsize)
+    trg_min_freq = data_cfg.get("trg_voc_min_freq", 1)
+
+
 # pylint: disable=global-at-module-level
 global max_src_in_batch, max_tgt_in_batch
 
