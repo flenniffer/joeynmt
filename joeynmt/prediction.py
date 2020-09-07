@@ -14,9 +14,9 @@ from torchtext.data import Dataset, Field
 from joeynmt.helpers import bpe_postprocess, load_config, make_logger,\
     get_latest_checkpoint, load_checkpoint, store_attention_plots
 from joeynmt.metrics import bleu, chrf, token_accuracy, sequence_accuracy
-from joeynmt.model import build_model, Model
+from joeynmt.model import build_model, Model, UnsupervisedNMTModel
 from joeynmt.batch import Batch
-from joeynmt.data import load_data, make_data_iter, MonoDataset
+from joeynmt.data import load_data, make_data_iter, MonoDataset, load_unsupervised_data
 from joeynmt.constants import UNK_TOKEN, PAD_TOKEN, EOS_TOKEN
 from joeynmt.vocabulary import Vocabulary
 
@@ -192,8 +192,9 @@ def test(cfg_file,
         raise ValueError("Test data must be specified in config.")
 
     # when checkpoint is not specified, take latest (best) from model dir
+    step = "best"
+    model_dir = cfg["training"]["model_dir"]
     if ckpt is None:
-        model_dir = cfg["training"]["model_dir"]
         ckpt = get_latest_checkpoint(model_dir)
         if ckpt is None:
             raise FileNotFoundError("No checkpoint found in directory {}."
@@ -203,6 +204,7 @@ def test(cfg_file,
         except IndexError:
             step = "best"
 
+    architecture = cfg["model"].get("architecture", "encoder-decoder")
     batch_size = cfg["training"].get(
         "eval_batch_size", cfg["training"]["batch_size"])
     batch_type = cfg["training"].get(
@@ -212,77 +214,160 @@ def test(cfg_file,
     eval_metric = cfg["training"]["eval_metric"]
     max_output_length = cfg["training"].get("max_output_length", None)
 
-    # load the data
-    _, dev_data, test_data, src_vocab, trg_vocab = load_data(
-        data_cfg=cfg["data"])
+    if architecture == "encoder-decoder":
+        # load the data
+        _, dev_data, test_data, src_vocab, trg_vocab = load_data(
+            data_cfg=cfg["data"])
+        data_to_predict = {"dev": dev_data, "test": test_data}
 
-    data_to_predict = {"dev": dev_data, "test": test_data}
+        # load model state from disk
+        model_checkpoint = load_checkpoint(ckpt, use_cuda=use_cuda)
 
-    # load model state from disk
-    model_checkpoint = load_checkpoint(ckpt, use_cuda=use_cuda)
+        # build model and load parameters into it
+        model = build_model(cfg["model"], src_vocab=src_vocab, trg_vocab=trg_vocab)
+        model.load_state_dict(model_checkpoint["model_state"])
 
-    # build model and load parameters into it
-    model = build_model(cfg["model"], src_vocab=src_vocab, trg_vocab=trg_vocab)
-    model.load_state_dict(model_checkpoint["model_state"])
+        if use_cuda:
+            model.cuda()
 
-    if use_cuda:
-        model.cuda()
-
-    # whether to use beam search for decoding, 0: greedy decoding
-    if "testing" in cfg.keys():
-        beam_size = cfg["testing"].get("beam_size", 1)
-        beam_alpha = cfg["testing"].get("alpha", -1)
-        postprocess = cfg["testing"].get("postprocess", True)
-    else:
-        beam_size = 1
-        beam_alpha = -1
-        postprocess = True
-
-    for data_set_name, data_set in data_to_predict.items():
-
-        #pylint: disable=unused-variable
-        score, loss, ppl, sources, sources_raw, references, hypotheses, \
-        hypotheses_raw, attention_scores = validate_on_data(
-            model, data=data_set, batch_size=batch_size,
-            batch_type=batch_type, level=level,
-            max_output_length=max_output_length, eval_metric=eval_metric,
-            use_cuda=use_cuda, loss_function=None, beam_size=beam_size,
-            beam_alpha=beam_alpha, logger=logger, postprocess=postprocess)
-        #pylint: enable=unused-variable
-
-        if "trg" in data_set.fields:
-            decoding_description = "Greedy decoding" if beam_size < 2 else \
-                "Beam search decoding with beam size = {} and alpha = {}".\
-                    format(beam_size, beam_alpha)
-            logger.info("%4s %s: %6.2f [%s]",
-                        data_set_name, eval_metric, score, decoding_description)
+        # whether to use beam search for decoding, 0: greedy decoding
+        if "testing" in cfg.keys():
+            beam_size = cfg["testing"].get("beam_size", 1)
+            beam_alpha = cfg["testing"].get("alpha", -1)
+            postprocess = cfg["testing"].get("postprocess", True)
         else:
-            logger.info("No references given for %s -> no evaluation.",
-                        data_set_name)
+            beam_size = 1
+            beam_alpha = -1
+            postprocess = True
 
-        if save_attention:
-            if attention_scores:
-                attention_name = "{}.{}.att".format(data_set_name, step)
-                attention_path = os.path.join(model_dir, attention_name)
-                logger.info("Saving attention plots. This might take a while..")
-                store_attention_plots(attentions=attention_scores,
-                                      targets=hypotheses_raw,
-                                      sources=data_set.src,
-                                      indices=range(len(hypotheses)),
-                                      output_prefix=attention_path)
-                logger.info("Attention plots saved to: %s", attention_path)
+        for data_set_name, data_set in data_to_predict.items():
+
+            # pylint: disable=unused-variable
+            score, loss, ppl, sources, sources_raw, references, hypotheses, \
+            hypotheses_raw, attention_scores = validate_on_data(
+                model, data=data_set, batch_size=batch_size,
+                batch_type=batch_type, level=level,
+                max_output_length=max_output_length, eval_metric=eval_metric,
+                use_cuda=use_cuda, loss_function=None, beam_size=beam_size,
+                beam_alpha=beam_alpha, logger=logger, postprocess=postprocess)
+            # pylint: enable=unused-variable
+
+            if "trg" in data_set.fields:
+                decoding_description = "Greedy decoding" if beam_size < 2 else \
+                    "Beam search decoding with beam size = {} and alpha = {}". \
+                        format(beam_size, beam_alpha)
+                logger.info("%4s %s: %6.2f [%s]",
+                            data_set_name, eval_metric, score, decoding_description)
             else:
-                logger.warning("Attention scores could not be saved. "
-                               "Note that attention scores are not available "
-                               "when using beam search. "
-                               "Set beam_size to 1 for greedy decoding.")
+                logger.info("No references given for %s -> no evaluation.",
+                            data_set_name)
 
-        if output_path is not None:
-            output_path_set = "{}.{}".format(output_path, data_set_name)
-            with open(output_path_set, mode="w", encoding="utf-8") as out_file:
-                for hyp in hypotheses:
-                    out_file.write(hyp + "\n")
-            logger.info("Translations saved to: %s", output_path_set)
+            if save_attention:
+                if attention_scores:
+                    attention_name = "{}.{}.att".format(data_set_name, step)
+                    attention_path = os.path.join(model_dir, attention_name)
+                    logger.info("Saving attention plots. This might take a while..")
+                    store_attention_plots(attentions=attention_scores,
+                                          targets=hypotheses_raw,
+                                          sources=data_set.src,
+                                          indices=range(len(hypotheses)),
+                                          output_prefix=attention_path)
+                    logger.info("Attention plots saved to: %s", attention_path)
+                else:
+                    logger.warning("Attention scores could not be saved. "
+                                   "Note that attention scores are not available "
+                                   "when using beam search. "
+                                   "Set beam_size to 1 for greedy decoding.")
+
+            if output_path is not None:
+                output_path_set = "{}.{}".format(output_path, data_set_name)
+                with open(output_path_set, mode="w", encoding="utf-8") as out_file:
+                    for hyp in hypotheses:
+                        out_file.write(hyp + "\n")
+                logger.info("Translations saved to: %s", output_path_set)
+    else:
+        # load the data
+        _, _, _, _, dev_src2trg, dev_trg2src, test_src2trg, test_trg2src, src_vocab, trg_vocab = \
+            load_unsupervised_data(data_cfg=cfg["data"])
+        data_to_predict = {"src2trg": {"dev_src2trg": dev_src2trg,
+                                       "test_src2trg": test_src2trg},
+                           "trg2src": {"dev_trg2src": dev_trg2src,
+                                       "test_trg2src": test_trg2src}}
+
+        # load model state from disk
+        model_checkpoint = load_checkpoint(ckpt, use_cuda=use_cuda)
+
+        # build model and load parameters into it
+        model = build_model(cfg["model"], src_vocab=src_vocab, trg_vocab=trg_vocab)
+        assert isinstance(model, UnsupervisedNMTModel)
+        model.src2src_translator.load_state_dict(model_checkpoint["src2src_model_state"])
+        model.trg2trg_translator.load_state_dict(model_checkpoint["trg2trg_model_state"])
+        model.src2trg_translator.load_state_dict(model_checkpoint["src2trg_model_state"])
+        model.trg2src_translator.load_state_dict(model_checkpoint["trg2src_model_state"])
+
+        if use_cuda:
+            model.src2trg_translator.cuda()
+            model.trg2trg_translator.cuda()
+            model.src2trg_translator.cuda()
+            model.trg2src_translator.cuda()
+
+        # whether to use beam search for decoding, 0: greedy decoding
+        if "testing" in cfg.keys():
+            beam_size = cfg["testing"].get("beam_size", 1)
+            beam_alpha = cfg["testing"].get("alpha", -1)
+            postprocess = cfg["testing"].get("postprocess", True)
+        else:
+            beam_size = 1
+            beam_alpha = -1
+            postprocess = True
+
+        for translation_direction, dataset_dict in data_to_predict.items():
+            if translation_direction == "src2trg":
+                model_to_use = model.src2trg_translator
+            else:
+                model_to_use = model.trg2src_translator
+            for dataset_name, dataset in dataset_dict.items():
+                score, loss, ppl, sources, sources_raw, references, hypotheses, \
+                hypotheses_raw, attention_scores = validate_on_data(
+                    model_to_use, data=dataset, batch_size=batch_size,
+                    batch_type=batch_type, level=level,
+                    max_output_length=max_output_length, eval_metric=eval_metric,
+                    use_cuda=use_cuda, loss_function=None, beam_size=beam_size,
+                    beam_alpha=beam_alpha, logger=logger, postprocess=postprocess)
+
+                if "trg" in dataset.fields:
+                    decoding_description = "Greedy decoding" if beam_size < 2 else \
+                        "Beam search decoding with beam size = {} and alpha = {}". \
+                            format(beam_size, beam_alpha)
+                    logger.info("%4s %s: %6.2f [%s]",
+                                dataset_name, eval_metric, score, decoding_description)
+                else:
+                    logger.info("No references given for %s -> no evaluation.",
+                                dataset_name)
+
+                if save_attention:
+                    if attention_scores:
+                        attention_name = "{}.{}.att".format(dataset_name, step)
+                        attention_path = os.path.join(model_dir, attention_name)
+                        logger.info("Saving attention plots. This might take a while..")
+                        store_attention_plots(attentions=attention_scores,
+                                              targets=hypotheses_raw,
+                                              sources=dataset.src,
+                                              indices=list(range(len(hypotheses))),
+                                              output_prefix=attention_path)
+                        logger.info("Attention plots saved to: %s", attention_path)
+                    else:
+                        logger.warning("Attention scores could not be saved. "
+                                       "Note that attention scores are not available "
+                                       "when using beam search. "
+                                       "Set beam_size to 1 for greedy decoding.")
+
+                if output_path is not None:
+                    output_path_set = "{}.{}".format(output_path, dataset_name)
+                    with open(output_path_set, mode="w", encoding="utf-8") as out_file:
+                        for hyp in hypotheses:
+                            out_file.write(hyp + "\n")
+                    logger.info("Translations saved to: %s", output_path_set)
 
 
 def translate(cfg_file, ckpt: str, output_path: str = None) -> None:
