@@ -122,6 +122,26 @@ def set_seed(seed: int) -> None:
     np.random.seed(seed)
     random.seed(seed)
 
+def log_unsupervised_data_info(src2src: Dataset, trg2trg: Dataset, BTsrc: Dataset, BTtrg: Dataset,
+                               dev_src2trg: Dataset, dev_trg2src: Dataset,
+                               test_src2trg: Dataset, test_trg2src: Dataset,
+                               src_vocab: Vocabulary, trg_vocab: Vocabulary,
+                               logging_function: Callable[[str], None]) -> None:
+    logging_function("Train data set sizes: \n\tsrc2src %d,\n\ttrg2trg %d,\n\tBTsrc %d,\n\tBTtrg %d",
+                     len(src2src), len(trg2trg), len(BTsrc), len(BTtrg))
+    logging_function("Dev data set sizes: \n\tsrc2trg %d,\n\ttrg2src %d",
+                     len(dev_src2trg), len(dev_trg2src))
+    logging_function("Test data set sizes: \n\tsrc2trg %d,\n\ttrg2src %d",
+                     len(test_src2trg) if test_src2trg is not None else 0,
+                     len(test_trg2src) if test_trg2src is not None else 0)
+
+    logging_function("First 10 words (src): %s", " ".join(
+        '(%d) %s' % (i, t) for i, t in enumerate(src_vocab.itos[:10])))
+    logging_function("First 10 words (trg): %s", " ".join(
+        '(%d) %s' % (i, t) for i, t in enumerate(trg_vocab.itos[:10])))
+
+    logging_function("Number of Src words (types): %d", len(src_vocab))
+    logging_function("Number of Trg words (types): %d", len(trg_vocab))
 
 def log_data_info(train_data: Dataset, valid_data: Dataset, test_data: Dataset,
                   src_vocab: Vocabulary, trg_vocab: Vocabulary,
