@@ -197,7 +197,7 @@ class Model(nn.Module):
                    self.decoder, self.src_embed, self.trg_embed)
 
 
-class UnsupervisedNMTModel(nn.Module):
+class UnsupervisedNMTModel:
     def __init__(self,
                  src_embed: Embeddings,
                  trg_embed: Embeddings,
@@ -220,14 +220,11 @@ class UnsupervisedNMTModel(nn.Module):
         :param trg_vocab:
         """
         super(UnsupervisedNMTModel, self).__init__()
-
         self.src_embed = src_embed
         self.trg_embed = trg_embed
         self.shared_encoder = encoder
-        self.current_encoder_embeddings = None
         self.src_decoder = src_decoder
         self.trg_decoder = trg_decoder
-        self.current_decoder = None
         self.src_vocab = src_vocab
         self.trg_vocab = trg_vocab
         self.src_bos_index = self.src_vocab.stoi[BOS_TOKEN]
@@ -237,138 +234,20 @@ class UnsupervisedNMTModel(nn.Module):
         self.trg_pad_index = self.trg_vocab.stoi[PAD_TOKEN]
         self.trg_eos_index = self.trg_vocab.stoi[EOS_TOKEN]
 
-    def set_current_encoder_embeddings(self, encode_mode: str):
-        if encode_mode == "src":
-            self.current_encoder_embeddings = self.src_embed
-        elif encode_mode == "trg":
-            self.current_encoder_embeddings = self.trg_embed
-        else:
-            raise ValueError("Encoding mode must be either 'src' or 'trg'.")
-
-    def set_current_decoder(self, decode_mode: str):
-        if decode_mode == "src":
-            self.current_decoder = self.src_decoder
-        elif decode_mode == "trg":
-            self.current_decoder = self.trg_decoder
-        else:
-            raise ValueError("Decoding mode must be either 'src' or 'trg'.")
-
-    def forward(self, src_input: Tensor, trg_input: Tensor, src_mask: Tensor,
-                src_lengths: Tensor, trg_mask: Tensor = None) \
-            -> (Tensor, Tensor, Tensor, Tensor):
-        """
-        Encodes the input sentence using the current encoder embeddings.
-        Decodes the encoded input using the current decoder.
-        """
-        # Encode using current encoder embeddings
-        encoder_output, encoder_hidden = self.encode(src_input, src_lengths, src_mask)
-
-        unroll_steps = trg_input.size(1)
-        # Decode using current decoder
-        return self.decode(encoder_output,
-                           encoder_hidden,
-                           src_mask, trg_input,
-                           unroll_steps,
-                           trg_mask=trg_mask)
-
-    def encode(self, src_input: Tensor, src_length: Tensor, src_mask: Tensor) \
-            -> (Tensor, Tensor):
-        return self.shared_encoder(
-            self.current_encoder_embeddings(src_input), src_length, src_mask)
-
-    def decode(self, encoder_output: Tensor, encoder_hidden: Tensor,
-               src_mask: Tensor, trg_input: Tensor,
-               unroll_steps: int,
-               decoder_hidden: Tensor = None,
-               trg_mask: Tensor = None) \
-            -> (Tensor, Tensor, Tensor, Tensor):
-        return self.current_decoder(trg_embed=self.trg_embed(trg_input),
-                                    encoder_output=encoder_output,
-                                    encoder_hidden=encoder_hidden,
-                                    src_mask=src_mask,
-                                    unroll_steps=unroll_steps,
-                                    hidden=decoder_hidden,
-                                    trg_mask=trg_mask)
-
-    def get_loss_for_batch(self, batch: Batch, loss_function: nn.Module) \
-            -> Tensor:
-        """
-        Compute non-normalized loss and number of tokens for a batch
-
-        :param batch: batch to compute loss for
-        :param loss_function: loss function, computes for input and target
-            a scalar loss for the complete batch
-        :return: batch_loss: sum of losses over non-pad elements in the batch
-        """
-        # pylint: disable=unused-variable
-        out, hidden, att_probs, _ = self.forward(
-            src_input=batch.src, trg_input=batch.trg_input,
-            src_mask=batch.src_mask, src_lengths=batch.src_lengths,
-            trg_mask=batch.trg_mask)
-
-        # compute log probs
-        log_probs = F.log_softmax(out, dim=-1)
-
-        # compute batch loss
-        batch_loss = loss_function(log_probs, batch.trg)
-        # return batch loss = sum over all elements in batch that are not pad
-        return batch_loss
-
-    def run_batch(self, batch: Batch, max_output_length: int, beam_size: int,
-                  beam_alpha: float) -> (np.array, np.array):
-        """
-        Get outputs and attentions scores for a given batch
-
-        :param batch: batch to generate hypotheses for
-        :param max_output_length: maximum length of hypotheses
-        :param beam_size: size of the beam for beam search, if 0 use greedy
-        :param beam_alpha: alpha value for beam search
-        :return: stacked_output: hypotheses for batch,
-            stacked_attention_scores: attention scores for batch
-        """
-        # Encode using current encoder embeddings
-        encoder_output, encoder_hidden = self.encode(
-            batch.src, batch.src_lengths,
-            batch.src_mask)
-
-        # if maximum output length is not globally specified, adapt to src len
-        if max_output_length is None:
-            max_output_length = int(max(batch.src_lengths.cpu().numpy()) * 1.5)
-
-        # get current decoder and special symbol idxs
-        if self.current_decoder == self.src_decoder:  # current target is source language
-            current_trg_embed = self.src_embed
-            bos_index = self.src_bos_index
-            pad_index = self.src_pad_index
-            eos_index = self.src_eos_index
-        else:  # current target is target language
-            current_trg_embed = self.trg_embed
-            bos_index = self.trg_bos_index
-            pad_index = self.trg_pad_index
-            eos_index = self.trg_eos_index
-
-        # greedy decoding
-        if beam_size < 2:
-            stacked_output, stacked_attention_scores = greedy(
-                    encoder_hidden=encoder_hidden,
-                    encoder_output=encoder_output, eos_index=eos_index,
-                    src_mask=batch.src_mask, embed=current_trg_embed,
-                    bos_index=bos_index, decoder=self.current_decoder,
-                    max_output_length=max_output_length)
-            # batch, time, max_src_length
-        else:  # beam size
-            stacked_output, stacked_attention_scores = \
-                    beam_search(
-                        size=beam_size, encoder_output=encoder_output,
-                        encoder_hidden=encoder_hidden,
-                        src_mask=batch.src_mask, embed=current_trg_embed,
-                        max_output_length=max_output_length,
-                        alpha=beam_alpha, eos_index=eos_index,
-                        pad_index=pad_index,
-                        bos_index=bos_index,
-                        decoder=self.current_decoder)
-
-        return stacked_output, stacked_attention_scores
+        # Need four translators for four directions
+        # To optimize individual parameters
+        self.src2src_translator = Model(self.shared_encoder, self.src_decoder,
+                                        self.src_embed, self.src_embed,
+                                        self.src_vocab, self.src_vocab)
+        self.src2trg_translator = Model(self.shared_encoder, self.trg_decoder,
+                                        self.src_embed, self.trg_embed,
+                                        self.src_vocab, self.trg_vocab)
+        self.trg2src_translator = Model(self.shared_encoder, self.src_decoder,
+                                        self.trg_embed, self.src_embed,
+                                        self.trg_vocab, self.src_vocab)
+        self.trg2trg_translator = Model(self.shared_encoder, self.trg_decoder,
+                                        self.trg_embed, self.trg_embed,
+                                        self.trg_vocab, self.trg_vocab)
 
     def __repr__(self) -> str:
         """
@@ -540,6 +419,9 @@ def build_unsupervised_nmt_model(cfg: dict = None,
 
     # initialise model, embed_initializer should be none
     # so loaded embeddings won't be overwritten
-    initialize_model(model, cfg, src_padding_idx, trg_padding_idx)
+    initialize_model(model.src2src_translator, cfg, src_padding_idx, src_padding_idx)
+    initialize_model(model.src2trg_translator, cfg, src_padding_idx, trg_padding_idx)
+    initialize_model(model.trg2src_translator, cfg, trg_padding_idx, src_padding_idx)
+    initialize_model(model.trg2src_translator, cfg, trg_padding_idx, trg_padding_idx)
 
     return model
