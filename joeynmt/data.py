@@ -125,12 +125,12 @@ def load_unsupervised_data(data_cfg: dict) \
     :return:
         - src2src:
         - trg2trg:
-        - src2trg:
-        - trg2src:
-        - test_src2trg:
-        - test_trg2src:
+        - BTsrc:
+        - BTtrg:
         - dev_src2trg:
         - dev_trg2src:
+        - test_src2trg:
+        - test_trg2src:
         - src_vocab:
         - trg_vocab:
     """
@@ -140,8 +140,10 @@ def load_unsupervised_data(data_cfg: dict) \
     denoised_ext = data_cfg["denoised"]
     assert noised_ext != denoised_ext
     train_path = data_cfg["train"]
-    dev_path = data_cfg["dev"]
-    test_path = data_cfg.get("test", None)
+    src2trg_dev_path = data_cfg["src2trg_dev"]
+    trg2src_dev_path = data_cfg["trg2src_dev"]
+    src2trg_test_path = data_cfg.get("src2trg_test", None)
+    trg2src_test_path = data_cfg.get("trg2src_test", None)
     level = data_cfg["level"]
     lowercase = data_cfg["lowercase"]
     max_sent_length = data_cfg["max_sent_length"]
@@ -178,17 +180,85 @@ def load_unsupervised_data(data_cfg: dict) \
                                  lambda x: len(vars(x)['src']) <= max_sent_length
                                  and len(vars(x)['trg']) <= max_sent_length)
 
-    # datasets for BT TODO
-    # need only denoised data in order to back-translate on-the-fly
-    # the use (BT, denoised data) tuples as training examples
-    src2trg = Dataset()
-    trg2src = Dataset()
+    # datasets for BT
+    # need denoised src data in order to create back-translation on-the-fly
+    # then use (BT, denoised trg data) tuples as training examples
+    # so for now, create (denoised src data, denoised trg data) datasets in the same language
+    BTsrc = TranslationDataset(path=train_path,
+                               exts=("." + denoised_ext + "." + src_lang,
+                                     "." + denoised_ext + "." + src_lang),
+                               fields=(src_field, trg_field),
+                               filter_pred=
+                               lambda x: len(vars(x)['src']) <= max_sent_length
+                               and len(vars(x)['trg']) <= max_sent_length)
+
+    BTtrg = TranslationDataset(path=train_path,
+                               exts=("." + denoised_ext + "." + trg_lang,
+                                     "." + denoised_ext + "." + trg_lang),
+                               fields=(src_field, trg_field),
+                               filter_pred=
+                               lambda x: len(vars(x)['src']) <= max_sent_length
+                               and len(vars(x)['trg']) <= max_sent_length)
 
     src_max_size = data_cfg.get("src_voc_limit", sys.maxsize)
     src_min_freq = data_cfg.get("src_voc_min_freq", 1)
     trg_max_size = data_cfg.get("trg_voc_limit", sys.maxsize)
     trg_min_freq = data_cfg.get("trg_voc_min_freq", 1)
 
+    src_vocab_file = data_cfg.get("src_vocab", None)
+    trg_vocab_file = data_cfg.get("trg_vocab", None)
+
+    src_vocab = build_vocab(field="trg", min_freq=src_min_freq,
+                            max_size=src_max_size,
+                            dataset=src2src, vocab_file=src_vocab_file)
+    trg_vocab = build_vocab(field="trg", min_freq=trg_min_freq,
+                            max_size=trg_max_size,
+                            dataset=trg2trg, vocab_file=trg_vocab_file)
+
+    def _choose_random_subset(train: Dataset, train_subset: int):
+        keep_ratio = train_subset / len(train)
+        keep, _ = train.split(split_ratio=[keep_ratio, 1 - keep_ratio],
+                              random_state=random.getstate())
+        return keep
+
+    random_train_subset = data_cfg.get("random_train_subset", -1)
+    if random_train_subset > -1:
+        # select this many training examples randomly and discard the rest
+        src2src = _choose_random_subset(src2src, random_train_subset)
+        trg2trg = _choose_random_subset(trg2trg, random_train_subset)
+        BTsrc = _choose_random_subset(BTsrc, random_train_subset)
+        BTtrg = _choose_random_subset(BTtrg, random_train_subset)
+
+    assert len(src2src) == len(trg2trg) == len(BTsrc) == len(BTtrg), \
+        "All training sets must have equal length for unsupervised NMT."
+
+    dev_src2trg = TranslationDataset(path=src2trg_dev_path,
+                                     exts=("." + src_lang, "." + trg_lang),
+                                     fields=(src_field, trg_field))
+
+    dev_trg2src = TranslationDataset(path=trg2src_dev_path,
+                                     exts=("." + trg_lang, "." + src_lang),
+                                     fields=(src_field, trg_field))
+
+    def _make_test_set(test_path: str, src_lang: str, trg_lang: str) -> Optional[Dataset]:
+        if test_path is not None:
+            if os.path.isfile(test_path + "." + trg_lang):
+                return TranslationDataset(path=test_path,
+                                          exts=("." + src_lang, "." + trg_lang),
+                                          fields=(src_field, trg_field))
+            else:
+                return MonoDataset(path=test_path,
+                                   ext="." + src_lang,
+                                   field=src_field)
+        else:
+            return None
+
+    test_src2trg = _make_test_set(src2trg_test_path,
+                                  src_lang=src_lang, trg_lang=trg_lang)
+    test_trg2src = _make_test_set(trg2src_test_path,
+                                  src_lang=trg_lang, trg_lang=src_lang)
+
+    return src2src, trg2trg, BTsrc, BTtrg, dev_src2trg, dev_trg2src, test_src2trg, test_trg2src, src_vocab, trg_vocab
 
 # pylint: disable=global-at-module-level
 global max_src_in_batch, max_tgt_in_batch
