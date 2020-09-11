@@ -1007,10 +1007,9 @@ class UnsupervisedNMTTrainManager:
                 self._scheduler_step(self.src2src_scheduler, self.src2src_scheduler_at)
 
                 # trg2trg denoising
-                batch = next(iter(trg2trg_iter))
-                batch = Batch(batch, pad_index=self.trg_pad_index, use_cuda=self.use_cuda)
+                trg2trg_batch = Batch(trg2trg_batch, pad_index=self.trg_pad_index, use_cuda=self.use_cuda)
 
-                trg2trg_batch_loss = self._train_batch(batch, model=self.trg2trg_model,
+                trg2trg_batch_loss = self._train_batch(trg2trg_batch, model=self.trg2trg_model,
                                                        optimizer=self.trg2trg_optimizer,
                                                        loss=self.trg2trg_loss)
 
@@ -1022,14 +1021,14 @@ class UnsupervisedNMTTrainManager:
 
                 self._scheduler_step(self.trg2trg_scheduler, self.trg2trg_scheduler_at)
 
-                # Back-translation
+                # On-the-fly back-translation
                 # Backtranslate src
-                batch = next(iter(BTsrc_iter))
-                BTsrc_batch = Batch(batch, pad_index=self.src_pad_index, use_cuda=self.use_cuda)
+                BTsrc_batch = Batch(BTsrc_batch, pad_index=self.src_pad_index, use_cuda=self.use_cuda)
 
-                # train on trg2src batch
+                # create trg2src batch by back-translating src
                 BT_trg2src_batch = self._backtranslate(model=self.src2trg_model, batch=BTsrc_batch)
 
+                # train on trg2src batch
                 BT_trg2src_batch = Batch(BT_trg2src_batch, pad_index=self.src_pad_index, use_cuda=self.use_cuda)
                 trg2src_batch_loss = self._train_batch(BT_trg2src_batch, model=self.trg2src_model,
                                                        optimizer=self.trg2src_optimizer,
@@ -1042,12 +1041,12 @@ class UnsupervisedNMTTrainManager:
                 epoch_loss += trg2src_batch_loss
 
                 # Backtranslate trg
-                batch = next(iter(BTtrg_iter))
-                BTtrg_batch = Batch(batch, pad_index=self.trg_pad_index, use_cuda=self.use_cuda)
+                BTtrg_batch = Batch(BTtrg_batch, pad_index=self.trg_pad_index, use_cuda=self.use_cuda)
 
-                # train on src2trg batch
+                # create src2trg batch by back-translating trg
                 BT_src2trg_batch = self._backtranslate(model=self.trg2src_model, batch=BTtrg_batch)
 
+                # train on src2trg batch
                 BT_src2trg_batch = Batch(BT_src2trg_batch, pad_index=self.trg_pad_index, use_cuda=self.use_cuda)
                 src2trg_batch_loss = self._train_batch(BT_src2trg_batch, model=self.src2trg_model,
                                                        optimizer=self.src2trg_optimizer,
@@ -1213,7 +1212,7 @@ class UnsupervisedNMTTrainManager:
         src = output[sort_reverse_index]
         trg = batch.trg
         src_tensor = Tensor(src)
-        trg_tensor = Tensor(trg)
+        trg_tensor = Tensor(trg.Float())
         BTbatch_dataset = TensorDataset(src_tensor, trg_tensor)
         BTbatch_iter = make_data_iter(BTbatch_dataset,
                                       batch_size=self.batch_size, batch_type=self.batch_type,
