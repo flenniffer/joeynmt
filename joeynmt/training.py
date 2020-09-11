@@ -983,7 +983,7 @@ class UnsupervisedNMTTrainManager:
             # Iterate through all four training corpora
             for i in range(no_batches):
                 # src2src denoising
-                batch = next(iter(src2src_iter))
+                batch = next(src2src_iter)
                 batch = Batch(batch, pad_index=self.src_pad_index, use_cuda=self.use_cuda)
 
                 src2src_batch_loss = self._train_batch(batch, model=self.src2src_model,
