@@ -990,12 +990,11 @@ class UnsupervisedNMTTrainManager:
                 optimizer.zero_grad()
             epoch_loss = 0
             # Iterate through all four training corpora
-            for i in range(no_batches):
+            for src2src_batch, trg2trg_batch, BTsrc_batch, BTtrg_batch in zip(src2src_iter, trg2trg_iter, BTsrc_iter, BTtrg_iter):
                 # src2src denoising
-                batch = next(src2src_iter)
-                batch = Batch(batch, pad_index=self.src_pad_index, use_cuda=self.use_cuda)
+                src2src_batch = Batch(src2src_batch, pad_index=self.src_pad_index, use_cuda=self.use_cuda)
 
-                src2src_batch_loss = self._train_batch(batch, model=self.src2src_model,
+                src2src_batch_loss = self._train_batch(src2src_batch, model=self.src2src_model,
                                                        optimizer=self.src2src_optimizer,
                                                        loss=self.src2src_loss)
 
