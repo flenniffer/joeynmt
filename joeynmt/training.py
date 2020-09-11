@@ -1212,7 +1212,7 @@ class UnsupervisedNMTTrainManager:
         src = output[sort_reverse_index]
         trg = batch.trg
         src_tensor = Tensor(src)
-        trg_tensor = Tensor(trg.Float())
+        trg_tensor = Tensor(trg.float())
         BTbatch_dataset = TensorDataset(src_tensor, trg_tensor)
         BTbatch_iter = make_data_iter(BTbatch_dataset,
                                       batch_size=self.batch_size, batch_type=self.batch_type,
