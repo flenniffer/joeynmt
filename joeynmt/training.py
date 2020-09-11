@@ -952,13 +952,22 @@ class UnsupervisedNMTTrainManager:
         """
         TODO
         """
-        train_iters = []
-        for dataset in [src2src, trg2trg, BTsrc, BTtrg]:
-            train_iters.append(make_data_iter(dataset=dataset,
-                                              batch_size=self.batch_size, batch_type=self.batch_type,
-                                              train=True, shuffle=self.shuffle))
-
-        src2src_iter, trg2trg_iter, BTsrc_iter, BTtrg_iter = train_iters
+        src2src_iter = iter(make_data_iter(dataset=src2src,
+                                           batch_size=self.batch_size,
+                                           batch_type=self.batch_type,
+                                           train=True, shuffle=self.shuffle))
+        trg2trg_iter = iter(make_data_iter(dataset=trg2trg,
+                                           batch_size=self.batch_size,
+                                           batch_type=self.batch_type,
+                                           train=True, shuffle=self.shuffle))
+        BTsrc_iter = iter(make_data_iter(dataset=BTsrc,
+                                         batch_size=self.batch_size,
+                                         batch_type=self.batch_type,
+                                         train=True, shuffle=self.shuffle))
+        BTtrg_iter = iter(make_data_iter(dataset=BTtrg,
+                                         batch_size=self.batch_size,
+                                         batch_type=self.batch_type,
+                                         train=True, shuffle=self.shuffle))
 
         no_batches = math.ceil(len(src2src) / self.batch_size)
 
