@@ -1025,24 +1025,27 @@ class UnsupervisedNMTTrainManager:
 
                 # On-the-fly back-translation
                 # TODO MAKE IT WORK
+                # Backtranslate src
                 BTsrc_batch = Batch(BTsrc_batch, pad_index=self.src_pad_index, use_cuda=self.use_cuda)
 
-                # create trg2src batch by back-translating src
-                trg_decoded = self._backtranslate(model=self.src2trg_model, batch=BTsrc_batch)
-                src_decoded = self.src2trg_model.src_vocab.arrays_to_sentences(BTsrc_batch.src)
-                # join decoded
-                trg_hypotheses = [self.join_char.join(h) for h in trg_decoded]
-                src_sentences = [self.join_char.join(s) for s in src_decoded]
+                src_sentences, trg_hypotheses = self._backtranslate(model=self.src2trg_model,
+                                                                    batch=BTsrc_batch)
 
-                # create dataset
+                print(src_sentences[0])
+                print(trg_hypotheses[0])
+
+                # create dataset with BT as source
                 BT_trg2src = BacktranslationDataset(trg_hypotheses, src_sentences,
-                                                   self.fields['src'][self.trg_lang], self.fields['trg'][self.src_lang])
+                                                    self.fields['src'][self.trg_lang],
+                                                    self.fields['trg'][self.src_lang])
                 BT_trg2src_iter = iter(make_data_iter(dataset=BT_trg2src,
                                                       batch_size=self.batch_size,
                                                       batch_type=self.batch_type,
                                                       train=True, shuffle=self.shuffle))
-                BT_trg2src_batch = next(BT_trg2src_iter)
+                for i, batch in enumerate(BT_trg2src_iter):
+                    print(i)
                 # train on trg2src batch
+                BT_trg2src_batch = next(BT_trg2src_iter)
                 BT_trg2src_batch = Batch(BT_trg2src_batch, pad_index=self.src_pad_index, use_cuda=self.use_cuda)
                 trg2src_batch_loss = self._train_batch(BT_trg2src_batch, model=self.trg2src_model,
                                                        optimizer=self.trg2src_optimizer,
@@ -1057,10 +1060,20 @@ class UnsupervisedNMTTrainManager:
                 # Backtranslate trg
                 BTtrg_batch = Batch(BTtrg_batch, pad_index=self.trg_pad_index, use_cuda=self.use_cuda)
 
-                # create src2trg batch by back-translating trg
-                BT_src2trg_batch = self._backtranslate(model=self.trg2src_model, batch=BTtrg_batch)
+                trg_sentences, src_hypotheses = self._backtranslate(model=self.trg2src_model,
+                                                                    batch=BTtrg_batch)
+                # create dataset with BT as source
+                BT_src2trg = BacktranslationDataset(src_hypotheses, trg_sentences,
+                                                    self.fields['src'][self.src_lang],
+                                                    self.fields['trg'][self.trg_lang])
+
+                BT_src2trg_iter = iter(make_data_iter(dataset=BT_src2trg,
+                                                      batch_size=self.batch_size,
+                                                      batch_type=self.batch_type,
+                                                      train=True, shuffle=self.shuffle))
 
                 # train on src2trg batch
+                BT_src2trg_batch = next(BT_src2trg_iter)
                 BT_src2trg_batch = Batch(BT_src2trg_batch, pad_index=self.trg_pad_index, use_cuda=self.use_cuda)
                 src2trg_batch_loss = self._train_batch(BT_src2trg_batch, model=self.src2trg_model,
                                                        optimizer=self.src2trg_optimizer,
@@ -1224,8 +1237,16 @@ class UnsupervisedNMTTrainManager:
                                         max_output_length=self.max_output_length,
                                         beam_size=1, beam_alpha=-1)
         hypotheses = output[sort_reverse_index]
-        decoded_hypotheses = model.trg_vocab.arrays_to_sentences(hypotheses, cut_at_eos=True)
-        return decoded_hypotheses
+
+        # decode source and target sentences
+        src_decoded = model.src_vocab.arrays_to_sentences(batch.src)
+        trg_decoded = model.trg_vocab.arrays_to_sentences(hypotheses, cut_at_eos=True)
+
+        # join decoded sentences
+        src_sentences = [self.join_char.join(s) for s in src_decoded]
+        trg_hypotheses = [self.join_char.join(h) for h in trg_decoded]
+
+        return src_sentences, trg_hypotheses
 
 
     def _validate(self, translation_direction: str, data: Dataset, model: Model, loss: torch.nn.Module,
