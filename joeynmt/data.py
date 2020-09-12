@@ -119,7 +119,8 @@ def load_unsupervised_data(data_cfg: dict) \
         -> (Dataset, Dataset, Dataset, Dataset,
             Dataset, Dataset,
             Optional[Dataset], Optional[Dataset],
-            Vocabulary, Vocabulary):
+            Vocabulary, Vocabulary,
+            dict):
     """
     :param data_cfg: configuration dictionary for data
     :return:
@@ -133,6 +134,7 @@ def load_unsupervised_data(data_cfg: dict) \
         - test_trg2src:
         - src_vocab:
         - trg_vocab:
+        - fields:
     """
     src_lang = data_cfg["src"]
     trg_lang = data_cfg["trg"]
@@ -179,13 +181,18 @@ def load_unsupervised_data(data_cfg: dict) \
                                batch_first=True, lower=lowercase,
                                include_lengths=True)
 
+    fields = {'src': {src_lang: src_src_field,
+                      trg_lang: trg_src_field},
+              'trg': {src_lang: src_trg_field,
+                      trg_lang: trg_trg_field}}
+
     # datasets for denoising
     # 'translate' from noised input to denoised output
 
     src2src = TranslationDataset(path=train_path,
                                  exts=("." + noised_ext + "." + src_lang,
                                        "." + denoised_ext + "." + src_lang),
-                                 fields=(src_src_field, src_trg_field),
+                                 fields=(fields['src'][src_lang], fields['trg'][src_lang]),
                                  filter_pred=
                                  lambda x: len(vars(x)['src']) <= max_sent_length
                                  and len(vars(x)['trg']) <= max_sent_length)
@@ -193,7 +200,7 @@ def load_unsupervised_data(data_cfg: dict) \
     trg2trg = TranslationDataset(path=train_path,
                                  exts=("." + noised_ext + "." + trg_lang,
                                        "." + denoised_ext + "." + trg_lang),
-                                 fields=(trg_src_field, trg_trg_field),
+                                 fields=(fields['src'][trg_lang], fields['trg'][trg_lang]),
                                  filter_pred=
                                  lambda x: len(vars(x)['src']) <= max_sent_length
                                  and len(vars(x)['trg']) <= max_sent_length)
@@ -206,7 +213,7 @@ def load_unsupervised_data(data_cfg: dict) \
     BTsrc = TranslationDataset(path=train_path,
                                exts=("." + denoised_ext + "." + src_lang,
                                      "." + denoised_ext + "." + src_lang),
-                               fields=(src_src_field, src_trg_field),
+                               fields=(fields['src'][src_lang], fields['trg'][src_lang]),
                                filter_pred=
                                lambda x: len(vars(x)['src']) <= max_sent_length
                                and len(vars(x)['trg']) <= max_sent_length)
@@ -214,7 +221,7 @@ def load_unsupervised_data(data_cfg: dict) \
     BTtrg = TranslationDataset(path=train_path,
                                exts=("." + denoised_ext + "." + trg_lang,
                                      "." + denoised_ext + "." + trg_lang),
-                               fields=(trg_src_field, trg_trg_field),
+                               fields=(fields['src'][trg_lang], fields['trg'][trg_lang]),
                                filter_pred=
                                lambda x: len(vars(x)['src']) <= max_sent_length
                                and len(vars(x)['trg']) <= max_sent_length)
@@ -255,53 +262,39 @@ def load_unsupervised_data(data_cfg: dict) \
 
     dev_src2trg = TranslationDataset(path=src2trg_dev_path,
                                      exts=("." + src_lang, "." + trg_lang),
-                                     fields=(src_src_field, trg_trg_field))
+                                     fields=(fields['src'][src_lang], fields['trg'][trg_lang]))
 
     dev_trg2src = TranslationDataset(path=trg2src_dev_path,
                                      exts=("." + trg_lang, "." + src_lang),
-                                     fields=(trg_src_field, src_trg_field))
+                                     fields=(fields['src'][trg_lang], fields['trg'][src_lang]))
 
     def _make_test_set(test_path: str, src_lang: str, trg_lang: str) -> Optional[Dataset]:
         if test_path is not None:
             if os.path.isfile(test_path + "." + trg_lang):
                 return TranslationDataset(path=test_path,
                                           exts=("." + src_lang, "." + trg_lang),
-                                          fields=(src_field, trg_field))
+                                          fields=(fields['src'][src_lang], fields['trg'][trg_lang]))
             else:
                 return MonoDataset(path=test_path,
                                    ext="." + src_lang,
-                                   field=src_field)
+                                   field=fields['src'][src_lang])
         else:
             return None
 
-    test_src2trg = None
-    if src2trg_test_path is not None:
-        if os.path.isfile(src2trg_test_path + "." + trg_lang):
-            test_src2trg = TranslationDataset(path=src2trg_test_path,
-                                              exts=("." + src_lang, "." + trg_lang),
-                                              fields=(src_src_field, trg_trg_field))
-        else:
-            test_src2trg = MonoDataset(path=src2trg_test_path,
-                                       ext="." + src_lang,
-                                       field=src_src_field)
-
-    test_trg2src = None
-    if trg2src_test_path is not None:
-        if os.path.isfile(trg2src_test_path + "." + trg_lang):
-            test_trg2src = TranslationDataset(path=trg2src_test_path,
-                                              exts=("." + trg_lang, "." + src_lang),
-                                              fields=(trg_src_field, src_trg_field))
-        else:
-            test_trg2src = MonoDataset(path=trg2src_test_path,
-                                       ext="." + trg_lang,
-                                       field=trg_src_field)
+    test_src2trg = _make_test_set(src2trg_test_path, src_lang, trg_lang)
+    test_trg2src = _make_test_set(trg2src_test_path, trg_lang, src_lang)
 
     # set vocab of all fields
     src_src_field.vocab = src_vocab
     trg_src_field.vocab = trg_vocab
     src_trg_field.vocab = src_vocab
     trg_trg_field.vocab = trg_vocab
-    return src2src, trg2trg, BTsrc, BTtrg, dev_src2trg, dev_trg2src, test_src2trg, test_trg2src, src_vocab, trg_vocab
+
+    return src2src, trg2trg, BTsrc, BTtrg, \
+           dev_src2trg, dev_trg2src, \
+           test_src2trg, test_trg2src, \
+           src_vocab, trg_vocab, \
+           fields
 
 # pylint: disable=global-at-module-level
 global max_src_in_batch, max_tgt_in_batch
@@ -396,3 +389,9 @@ class MonoDataset(Dataset):
         src_file.close()
 
         super(MonoDataset, self).__init__(examples, fields, **kwargs)
+
+class BacktranslationDataset(Dataset):
+    """Defines a dataset for on-the-fly back-translation."""
+    def __init__(self, src):
+
+        super(BacktranslationDataset, self).__init__(examples, fields, **kwargs)
