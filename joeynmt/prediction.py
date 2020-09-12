@@ -188,9 +188,6 @@ def test(cfg_file,
 
     cfg = load_config(cfg_file)
 
-    if "test" not in cfg["data"].keys():
-        raise ValueError("Test data must be specified in config.")
-
     # when checkpoint is not specified, take latest (best) from model dir
     step = "best"
     model_dir = cfg["training"]["model_dir"]
@@ -215,6 +212,8 @@ def test(cfg_file,
     max_output_length = cfg["training"].get("max_output_length", None)
 
     if architecture == "encoder-decoder":
+        if "test" not in cfg["data"].keys():
+            raise ValueError("Test data must be specified in config.")
         # load the data
         _, dev_data, test_data, src_vocab, trg_vocab = load_data(
             data_cfg=cfg["data"])
@@ -286,6 +285,8 @@ def test(cfg_file,
                         out_file.write(hyp + "\n")
                 logger.info("Translations saved to: %s", output_path_set)
     else:
+        if "src2trg_test" not in cfg["data"].keys() or "trg2src_test" not in cfg["data"].keys():
+            raise ValueError("Test data must be specified in config.")
         # load the data
         _, _, _, _, dev_src2trg, dev_trg2src, test_src2trg, test_trg2src, src_vocab, trg_vocab, _ = \
             load_unsupervised_data(data_cfg=cfg["data"])
