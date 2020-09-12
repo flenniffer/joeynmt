@@ -609,12 +609,13 @@ class UnsupervisedNMTTrainManager:
     for the unsupervised scenario as described in
     Artetxe et al. (2018): Unsupervised Neural Machine Translation
     """
-    def __init__(self, model: UnsupervisedNMTModel, config: dict):
+    def __init__(self, model: UnsupervisedNMTModel, config: dict, fields: dict):
         """
         Creates a new manager for an UnsupervisedNMTModel, as specified in the given
         configuration.
         :param model: UnsupervisedNMTModel defining the model
         :param config: dictionary containing the configuration
+        :param fields: dictionary containing source and target fields for source and target language
         """
         train_config = config["training"]
 
@@ -628,6 +629,7 @@ class UnsupervisedNMTTrainManager:
         self.tb_writer = SummaryWriter(
             log_dir=self.model_dir + "/tensorboard/")
 
+        # model
         self.model = model
         self.src2src_model = self.model.src2src_translator
         self.src2trg_model = self.model.src2trg_translator
@@ -638,7 +640,7 @@ class UnsupervisedNMTTrainManager:
                        self.src2trg_model,
                        self.trg2src_model,
                        self.trg2trg_model]
-        # model
+
         self.src_pad_index = self.model.src_pad_index
         self.src_bos_index = self.model.src_bos_index
         self.trg_pad_index = self.model.trg_pad_index
@@ -646,6 +648,9 @@ class UnsupervisedNMTTrainManager:
 
         for model in self.models:
             self._log_parameters_list(model)
+
+        # fields
+        self.fields = fields
 
         # normalization
         self.normalization = train_config.get("normalization", "batch")
@@ -1022,6 +1027,7 @@ class UnsupervisedNMTTrainManager:
                 self._scheduler_step(self.trg2trg_scheduler, self.trg2trg_scheduler_at)
 
                 # On-the-fly back-translation
+                # TODO MAKE IT WORK
                 # Backtranslate src
                 BTsrc_batch = Batch(BTsrc_batch, pad_index=self.src_pad_index, use_cuda=self.use_cuda)
 
@@ -1211,6 +1217,8 @@ class UnsupervisedNMTTrainManager:
                                         beam_size=1, beam_alpha=-1)
         src = output[sort_reverse_index]
         trg = batch.trg
+        print(batch.trg)
+        print(type(batch.trg))
         src_tensor = Tensor(src)
         trg_tensor = Tensor(trg.float())
         BTbatch_dataset = TensorDataset(src_tensor, trg_tensor)
@@ -1410,13 +1418,14 @@ def train(cfg_file: str) -> None:
         src2src, trg2trg, BTsrc, BTtrg, \
             dev_src2trg, dev_trg2src, \
             test_src2trg, test_trg2src, \
-            src_vocab, trg_vocab = load_unsupervised_data(data_cfg=cfg["data"])
+            src_vocab, trg_vocab,\
+            fields = load_unsupervised_data(data_cfg=cfg["data"])
 
         # build an unsupervised NMT model
         model = build_model(cfg["model"], src_vocab=src_vocab, trg_vocab=trg_vocab)
 
         # for training management of unsupervised NMT model
-        trainer = UnsupervisedNMTTrainManager(model=model, config=cfg)
+        trainer = UnsupervisedNMTTrainManager(model=model, config=cfg, fields=fields)
 
         # store copy of original training config in model dir
         shutil.copy2(cfg_file, trainer.model_dir + "/config.yaml")
