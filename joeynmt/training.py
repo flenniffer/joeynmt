@@ -1225,6 +1225,9 @@ class UnsupervisedNMTTrainManager:
         BTbatch_iter = make_data_iter(BTbatch_dataset,
                                       batch_size=self.batch_size, batch_type=self.batch_type,
                                       train=True, shuffle=self.shuffle)
+        print(BTbatch_iter)
+        for i in BTbatch_iter:
+            print(i)
         return next(iter(BTbatch_iter))
 
     def _validate(self, translation_direction: str, data: Dataset, model: Model, loss: torch.nn.Module,
