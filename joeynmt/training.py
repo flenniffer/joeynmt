@@ -956,22 +956,22 @@ class UnsupervisedNMTTrainManager:
         """
         TODO
         """
-        src2src_iter = iter(make_data_iter(dataset=src2src,
-                                           batch_size=self.batch_size,
-                                           batch_type=self.batch_type,
-                                           train=True, shuffle=self.shuffle))
-        trg2trg_iter = iter(make_data_iter(dataset=trg2trg,
-                                           batch_size=self.batch_size,
-                                           batch_type=self.batch_type,
-                                           train=True, shuffle=self.shuffle))
-        BTsrc_iter = iter(make_data_iter(dataset=BTsrc,
-                                         batch_size=self.batch_size,
-                                         batch_type=self.batch_type,
-                                         train=True, shuffle=self.shuffle))
-        BTtrg_iter = iter(make_data_iter(dataset=BTtrg,
-                                         batch_size=self.batch_size,
-                                         batch_type=self.batch_type,
-                                         train=True, shuffle=self.shuffle))
+        src2src_iter = make_data_iter(dataset=src2src,
+                                      batch_size=self.batch_size,
+                                      batch_type=self.batch_type,
+                                      train=True, shuffle=self.shuffle)
+        trg2trg_iter = make_data_iter(dataset=trg2trg,
+                                      batch_size=self.batch_size,
+                                      batch_type=self.batch_type,
+                                      train=True, shuffle=self.shuffle)
+        BTsrc_iter = make_data_iter(dataset=BTsrc,
+                                    batch_size=self.batch_size,
+                                    batch_type=self.batch_type,
+                                    train=True, shuffle=self.shuffle)
+        BTtrg_iter = make_data_iter(dataset=BTtrg,
+                                    batch_size=self.batch_size,
+                                    batch_type=self.batch_type,
+                                    train=True, shuffle=self.shuffle)
 
         for epoch_no in range(self.epochs):
             self.logger.info("EPOCH %d", epoch_no + 1)
@@ -992,7 +992,10 @@ class UnsupervisedNMTTrainManager:
                 optimizer.zero_grad()
             epoch_loss = 0
             # Iterate through all four training corpora
-            for src2src_batch, trg2trg_batch, BTsrc_batch, BTtrg_batch in zip(src2src_iter, trg2trg_iter, BTsrc_iter, BTtrg_iter):
+            for src2src_batch, trg2trg_batch, BTsrc_batch, BTtrg_batch in zip(iter(src2src_iter),
+                                                                              iter(trg2trg_iter),
+                                                                              iter(BTsrc_iter),
+                                                                              iter(BTtrg_iter)):
                 # src2src denoising
                 src2src_batch = Batch(src2src_batch, pad_index=self.src_pad_index, use_cuda=self.use_cuda)
 
@@ -1161,19 +1164,15 @@ class UnsupervisedNMTTrainManager:
                     'Training ended since minimum lr %f was reached for both translation directions.',
                     self.learning_rate_min)
                 break
+            self.logger.info('Epoch %3d: total training loss %.2f',
+                             epoch_no + 1, epoch_loss)
         else:
             self.logger.info('Training ended after %3d epochs.', epoch_no + 1)
 
-
-
-            self.logger.info('Epoch %3d: total training loss %.2f',
-                             epoch_no + 1, epoch_loss)
-
-
-            self.logger.info('Best validation result (greedy) at step '
-                             '%8d: %6.2f %s.', self.best_averaged_ckpt_iteration,
-                             self.best_averaged_ckpt_score,
-                             self.early_stopping_metric)
+        self.logger.info('Best validation result (greedy) at step '
+                         '%8d: %6.2f %s.', self.best_averaged_ckpt_iteration,
+                         self.best_averaged_ckpt_score,
+                         self.early_stopping_metric)
 
         self.tb_writer.close()  # close Tensorboard writer
 
