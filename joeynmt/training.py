@@ -1031,9 +1031,6 @@ class UnsupervisedNMTTrainManager:
                 src_sentences, trg_hypotheses = self._backtranslate(model=self.src2trg_model,
                                                                     batch=BTsrc_batch)
 
-                print(src_sentences[0])
-                print(trg_hypotheses[0])
-
                 # create dataset with BT as source
                 BT_trg2src = BacktranslationDataset(trg_hypotheses, src_sentences,
                                                     self.fields['src'][self.trg_lang],
@@ -1042,8 +1039,6 @@ class UnsupervisedNMTTrainManager:
                                                       batch_size=self.batch_size,
                                                       batch_type=self.batch_type,
                                                       train=True, shuffle=self.shuffle))
-                for i, batch in enumerate(BT_trg2src_iter):
-                    print(i)
                 # train on trg2src batch
                 BT_trg2src_batch = next(BT_trg2src_iter)
                 BT_trg2src_batch = Batch(BT_trg2src_batch, pad_index=self.src_pad_index, use_cuda=self.use_cuda)
