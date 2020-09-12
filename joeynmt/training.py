@@ -1161,15 +1161,19 @@ class UnsupervisedNMTTrainManager:
                     'Training ended since minimum lr %f was reached for both translation directions.',
                     self.learning_rate_min)
                 break
+        else:
+            self.logger.info('Training ended after %3d epochs.', epoch_no + 1)
+
+
 
             self.logger.info('Epoch %3d: total training loss %.2f',
                              epoch_no + 1, epoch_loss)
-        else:
-            self.logger.info('Training ended after %3d epochs.', epoch_no + 1)
-        self.logger.info('Best validation result (greedy) at step '
-                         '%8d: %6.2f %s.', self.best_averaged_ckpt_iteration,
-                         self.best_averaged_ckpt_score,
-                         self.early_stopping_metric)
+
+
+            self.logger.info('Best validation result (greedy) at step '
+                             '%8d: %6.2f %s.', self.best_averaged_ckpt_iteration,
+                             self.best_averaged_ckpt_score,
+                             self.early_stopping_metric)
 
         self.tb_writer.close()  # close Tensorboard writer
 
