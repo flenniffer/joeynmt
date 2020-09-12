@@ -287,7 +287,7 @@ def test(cfg_file,
                 logger.info("Translations saved to: %s", output_path_set)
     else:
         # load the data
-        _, _, _, _, dev_src2trg, dev_trg2src, test_src2trg, test_trg2src, src_vocab, trg_vocab = \
+        _, _, _, _, dev_src2trg, dev_trg2src, test_src2trg, test_trg2src, src_vocab, trg_vocab, _ = \
             load_unsupervised_data(data_cfg=cfg["data"])
         data_to_predict = {"src2trg": {"dev_src2trg": dev_src2trg,
                                        "test_src2trg": test_src2trg},

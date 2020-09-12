@@ -17,7 +17,6 @@ import numpy as np
 import torch
 from torch import Tensor
 from torch.utils.tensorboard import SummaryWriter
-from torch.utils.data import TensorDataset
 
 from torchtext.data import Dataset
 
@@ -30,7 +29,7 @@ from joeynmt.helpers import log_data_info, load_config, log_cfg, \
 from joeynmt.model import Model, UnsupervisedNMTModel
 from joeynmt.prediction import validate_on_data
 from joeynmt.loss import XentLoss
-from joeynmt.data import load_data, load_unsupervised_data, make_data_iter
+from joeynmt.data import load_data, load_unsupervised_data, make_data_iter, BacktranslationDataset
 from joeynmt.builders import build_optimizer, build_scheduler, \
     build_gradient_clipper
 from joeynmt.prediction import test
@@ -649,8 +648,12 @@ class UnsupervisedNMTTrainManager:
         for model in self.models:
             self._log_parameters_list(model)
 
-        # fields
+        # data for on-the-fly back-translation
         self.fields = fields
+        self.src_lang = config['data']['src']
+        self.trg_lang = config['data']['trg']
+        self.level = config['data']['level']
+        self.join_char = " " if self.level in ["word", "bpe"] else ""
 
         # normalization
         self.normalization = train_config.get("normalization", "batch")
@@ -781,14 +784,10 @@ class UnsupervisedNMTTrainManager:
         # CPU / GPU
         self.use_cuda = train_config["use_cuda"]
         if self.use_cuda:
-            self.src2src_model.cuda()
-            self.src2trg_model.cuda()
-            self.trg2src_model.cuda()
-            self.trg2trg_model.cuda()
-            self.src2src_loss.cuda()
-            self.src2trg_loss.cuda()
-            self.trg2src_loss.cuda()
-            self.trg2trg_loss.cuda()
+            for model in self.models:
+                model.cuda()
+            for loss in self.losses:
+                loss.cuda()
 
         # generation
         self.max_output_length = train_config.get("max_output_length", None)
@@ -974,8 +973,6 @@ class UnsupervisedNMTTrainManager:
                                          batch_type=self.batch_type,
                                          train=True, shuffle=self.shuffle))
 
-        no_batches = math.ceil(len(src2src) / self.batch_size)
-
         for epoch_no in range(self.epochs):
             self.logger.info("EPOCH %d", epoch_no + 1)
 
@@ -1028,12 +1025,23 @@ class UnsupervisedNMTTrainManager:
 
                 # On-the-fly back-translation
                 # TODO MAKE IT WORK
-                # Backtranslate src
                 BTsrc_batch = Batch(BTsrc_batch, pad_index=self.src_pad_index, use_cuda=self.use_cuda)
 
                 # create trg2src batch by back-translating src
-                BT_trg2src_batch = self._backtranslate(model=self.src2trg_model, batch=BTsrc_batch)
+                trg_decoded = self._backtranslate(model=self.src2trg_model, batch=BTsrc_batch)
+                src_decoded = self.src2trg_model.src_vocab.arrays_to_sentences(BTsrc_batch.src)
+                # join decoded
+                trg_hypotheses = [self.join_char.join(h) for h in trg_decoded]
+                src_sentences = [self.join_char.join(s) for s in src_decoded]
 
+                # create dataset
+                BT_trg2src = BacktranslationDataset(trg_hypotheses, src_sentences,
+                                                   self.fields['src'][self.trg_lang], self.fields['trg'][self.src_lang])
+                BT_trg2src_iter = iter(make_data_iter(dataset=BT_trg2src,
+                                                      batch_size=self.batch_size,
+                                                      batch_type=self.batch_type,
+                                                      train=True, shuffle=self.shuffle))
+                BT_trg2src_batch = next(BT_trg2src_iter)
                 # train on trg2src batch
                 BT_trg2src_batch = Batch(BT_trg2src_batch, pad_index=self.src_pad_index, use_cuda=self.use_cuda)
                 trg2src_batch_loss = self._train_batch(BT_trg2src_batch, model=self.trg2src_model,
@@ -1215,20 +1223,10 @@ class UnsupervisedNMTTrainManager:
             output, _ = model.run_batch(batch,
                                         max_output_length=self.max_output_length,
                                         beam_size=1, beam_alpha=-1)
-        src = output[sort_reverse_index]
-        trg = batch.trg
-        print(batch.trg)
-        print(type(batch.trg))
-        src_tensor = Tensor(src)
-        trg_tensor = Tensor(trg.float())
-        BTbatch_dataset = TensorDataset(src_tensor, trg_tensor)
-        BTbatch_iter = make_data_iter(BTbatch_dataset,
-                                      batch_size=self.batch_size, batch_type=self.batch_type,
-                                      train=False, shuffle=self.shuffle)
-        print(BTbatch_iter)
-        for i in BTbatch_iter:
-            print(i)
-        return next(iter(BTbatch_iter))
+        hypotheses = output[sort_reverse_index]
+        decoded_hypotheses = model.trg_vocab.arrays_to_sentences(hypotheses, cut_at_eos=True)
+        return decoded_hypotheses
+
 
     def _validate(self, translation_direction: str, data: Dataset, model: Model, loss: torch.nn.Module,
                   optimizer: torch.optim.Optimizer) -> (int, int):

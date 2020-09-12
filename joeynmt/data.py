@@ -209,22 +209,31 @@ def load_unsupervised_data(data_cfg: dict) \
     # need denoised src data in order to create back-translation on-the-fly
     # then use (BT, denoised trg data) tuples as training examples
     # so for now, create (denoised src data, denoised trg data) datasets in the same language
+    BTsrc = MonoDataset(path=train_path,
+                        ext="." + denoised_ext + "." + src_lang,
+                        field=fields['src'][src_lang],
+                        filter_pred=lambda x: len(vars(x)['src']) <= max_sent_length)
 
-    BTsrc = TranslationDataset(path=train_path,
+    BTtrg = MonoDataset(path=train_path,
+                        ext="." + denoised_ext + "." + trg_lang,
+                        field=fields['src'][trg_lang],
+                        filter_pred=lambda x: len(vars(x)['src']) <= max_sent_length)
+
+    """BTsrc = TranslationDataset(path=train_path,
                                exts=("." + denoised_ext + "." + src_lang,
                                      "." + denoised_ext + "." + src_lang),
                                fields=(fields['src'][src_lang], fields['trg'][src_lang]),
                                filter_pred=
                                lambda x: len(vars(x)['src']) <= max_sent_length
-                               and len(vars(x)['trg']) <= max_sent_length)
+                               and len(vars(x)['trg']) <= max_sent_length)"""
 
-    BTtrg = TranslationDataset(path=train_path,
+    """BTtrg = TranslationDataset(path=train_path,
                                exts=("." + denoised_ext + "." + trg_lang,
                                      "." + denoised_ext + "." + trg_lang),
                                fields=(fields['src'][trg_lang], fields['trg'][trg_lang]),
                                filter_pred=
                                lambda x: len(vars(x)['src']) <= max_sent_length
-                               and len(vars(x)['trg']) <= max_sent_length)
+                               and len(vars(x)['trg']) <= max_sent_length)"""
 
     src_max_size = data_cfg.get("src_voc_limit", sys.maxsize)
     src_min_freq = data_cfg.get("src_voc_min_freq", 1)
@@ -390,8 +399,16 @@ class MonoDataset(Dataset):
 
         super(MonoDataset, self).__init__(examples, fields, **kwargs)
 
+
 class BacktranslationDataset(Dataset):
     """Defines a dataset for on-the-fly back-translation."""
-    def __init__(self, src):
+    @staticmethod
+    def sort_key(ex):
+        return len(ex.src)
 
+    def __init__(self, src_ex, trg_ex, src_field, trg_field, **kwargs) -> None:
+        fields = [('src', src_field), ('trg', trg_field)]
+        examples = []
+        for src_sent, trg_hypothesis in zip(src_ex, trg_ex):
+            examples.append(data.Example.fromlist([src_sent, trg_hypothesis], fields))
         super(BacktranslationDataset, self).__init__(examples, fields, **kwargs)
