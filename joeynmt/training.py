@@ -1224,7 +1224,7 @@ class UnsupervisedNMTTrainManager:
         BTbatch_dataset = TensorDataset(src_tensor, trg_tensor)
         BTbatch_iter = make_data_iter(BTbatch_dataset,
                                       batch_size=self.batch_size, batch_type=self.batch_type,
-                                      train=True, shuffle=self.shuffle)
+                                      train=False, shuffle=self.shuffle)
         print(BTbatch_iter)
         for i in BTbatch_iter:
             print(i)
