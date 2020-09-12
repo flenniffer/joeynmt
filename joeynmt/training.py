@@ -1472,7 +1472,7 @@ def train(cfg_file: str) -> None:
 
         # predict with the best averaged model on validation and test
         # (if test data is available)
-        ckpt = "{}/{}.ckpt".format(trainer.model_dir, trainer.best_averaged_ckpt_score)
+        ckpt = "{}/{}.ckpt".format(trainer.model_dir, trainer.best_averaged_ckpt_iteration)
         output_name = "{:08d}.hyps".format(trainer.best_averaged_ckpt_iteration)
         output_path = os.path.join(trainer.model_dir, output_name)
         test(cfg_file, ckpt=ckpt, output_path=output_path, logger=trainer.logger)
