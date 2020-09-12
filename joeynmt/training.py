@@ -901,7 +901,7 @@ class UnsupervisedNMTTrainManager:
             "total_tokens": self.total_tokens,
             "best_ckpt_score": self.best_averaged_ckpt_score,
             "best_ckpt_iteration": self.best_averaged_ckpt_iteration,
-            "sr2src_model_state": self.src2src_model.state_dict(),
+            "src2src_model_state": self.src2src_model.state_dict(),
             "trg2trg_model_state": self.trg2trg_model.state_dict(),
             "src2trg_model_state": self.src2trg_model.state_dict(),
             "trg2src_model_state": self.trg2src_model.state_dict(),
