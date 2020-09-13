@@ -1,12 +1,13 @@
 import math
 
-from numpy import zeros, asarray
+from numpy import ones, asarray
+from numpy.random import default_rng
 
 from torch import nn, Tensor, from_numpy
 
 from joeynmt.helpers import freeze_params
 from joeynmt.vocabulary import Vocabulary
-from joeynmt.constants import UNK_TOKEN
+from joeynmt.constants import UNK_TOKEN, BOS_TOKEN, EOS_TOKEN, PAD_TOKEN
 
 
 class Embeddings(nn.Module):
@@ -81,12 +82,12 @@ class PretrainedEmbeddings(Embeddings):
     def load_embeddings_from_file(self, embed_file: str, vocab: Vocabulary) -> None:
         """
         Overwrites the initial Embedding Tensor with the embeddings from the embedding file.
-        Tokens without a specified embedding are initialised with zeros.
+        Tokens without a specified embedding are initialised with ones.
 
         :param embed_file: path to file containing token and embedding, one per line, separated by space
         :param vocab: the vocabulary of the language of the embeddings
         """
-        loaded_embeds = zeros((self.vocab_size, self.embedding_dim), dtype=float)
+        loaded_embeds = ones((self.vocab_size, self.embedding_dim), dtype=float)
         with open(embed_file, "r") as open_file:
             for line in open_file:
                 line = line.strip()
@@ -94,12 +95,15 @@ class PretrainedEmbeddings(Embeddings):
                     token, embedding_str = line.split(sep=" ", maxsplit=1)
                     idx = vocab.stoi.get(token, None)  # get index of token in vocabulary
                     if idx is None:  # token is not in vocabulary
+                        print(token)
                         continue
                     embedding = asarray(embedding_str.split(" "), dtype=float)
                     assert embedding.shape[0] == self.embedding_dim, "Dimensionality of loaded embedding does not match"
-                    loaded_embeds[idx] = embedding  # replace zeros at idx with correct embedding
+                    loaded_embeds[idx] = embedding  # replace ones at idx with correct embedding
 
-        # TODO: initialise special symbols
-        unk_idx = vocab.stoi[UNK_TOKEN]
+        # initialise special symbols from a normal distribution
+        specials = [vocab.stoi[special] for special in [UNK_TOKEN, BOS_TOKEN, EOS_TOKEN, PAD_TOKEN]]
+        for idx in specials:
+            loaded_embeds[idx] = default_rng().normal(size=(self.embedding_dim,))
         # overwrite Embedding Tensor
         self.lut.weight.data.copy_(from_numpy(loaded_embeds))

@@ -423,5 +423,6 @@ def build_unsupervised_nmt_model(cfg: dict = None,
     initialize_model(model.src2trg_translator, cfg, src_padding_idx, trg_padding_idx)
     initialize_model(model.trg2src_translator, cfg, trg_padding_idx, src_padding_idx)
     initialize_model(model.trg2src_translator, cfg, trg_padding_idx, trg_padding_idx)
-
+    der_idx = model.src2trg_translator.src_vocab.stoi["der"]
+    print(model.src2trg_translator.src_embed.lut[der_idx])
     return model
