@@ -88,7 +88,6 @@ class PretrainedEmbeddings(Embeddings):
         :param vocab: the vocabulary of the language of the embeddings
         """
         loaded_embeds = ones((self.vocab_size, self.embedding_dim), dtype=float)
-        print(vocab)
         with open(embed_file, "r") as open_file:
             for line in open_file:
                 line = line.strip()
