@@ -96,8 +96,8 @@ class PretrainedEmbeddings(Embeddings):
                     token, embedding_str = line.split(sep=" ", maxsplit=1)
                     idx = vocab.stoi.get(token, None)  # get index of token in vocabulary
                     if idx is None:  # token is not in vocabulary
-                        print(token)
                         continue
+                    print(token)
                     embedding = asarray(embedding_str.split(" "), dtype=float)
                     assert embedding.shape[0] == self.embedding_dim, "Dimensionality of loaded embedding does not match"
                     loaded_embeds[idx] = embedding  # replace ones at idx with correct embedding
