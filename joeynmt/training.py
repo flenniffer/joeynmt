@@ -1096,6 +1096,16 @@ class UnsupervisedNMTTrainManager:
                         "Tokens per Sec: %8.0f",
                         epoch_no + 1, self.steps, total_batch_loss,
                         elapsed_tokens / elapsed)
+                    self.logger.info(
+                        f"Example back-translations (src2trg):\n"
+                        f"Source:\t{src_sentences[0]}\n"
+                        f"BT:\t{trg_hypotheses[0]}"
+                    )
+                    self.logger.info(
+                        f"Example back-translations (trg2src):\n"
+                        f"Source:\t{trg_sentences[0]}\n"
+                        f"BT:\t{src_hypotheses[0]}"
+                    )
                     start = time.time()
                     total_valid_duration = 0
                     start_tokens = self.total_tokens
