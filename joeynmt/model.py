@@ -199,6 +199,8 @@ class Model(nn.Module):
 
 class UnsupervisedNMTModel:
     def __init__(self,
+                 loaded_src_embed: PretrainedEmbeddings,
+                 loaded_trg_embed: PretrainedEmbeddings,
                  src_embed: Embeddings,
                  trg_embed: Embeddings,
                  encoder: Encoder,
@@ -220,6 +222,8 @@ class UnsupervisedNMTModel:
         :param trg_vocab:
         """
         super(UnsupervisedNMTModel, self).__init__()
+        self.loaded_src_embed = loaded_src_embed
+        self.loaded_trg_embed = loaded_trg_embed
         self.src_embed = src_embed
         self.trg_embed = trg_embed
         self.shared_encoder = encoder
@@ -237,16 +241,16 @@ class UnsupervisedNMTModel:
         # Need four translators for four directions
         # To optimize individual parameters
         self.src2src_translator = Model(self.shared_encoder, self.src_decoder,
-                                        self.src_embed, self.src_embed,
+                                        self.loaded_src_embed, self.src_embed,
                                         self.src_vocab, self.src_vocab)
         self.src2trg_translator = Model(self.shared_encoder, self.trg_decoder,
-                                        self.src_embed, self.trg_embed,
+                                        self.loaded_src_embed, self.trg_embed,
                                         self.src_vocab, self.trg_vocab)
         self.trg2src_translator = Model(self.shared_encoder, self.src_decoder,
-                                        self.trg_embed, self.src_embed,
+                                        self.loaded_trg_embed, self.src_embed,
                                         self.trg_vocab, self.src_vocab)
         self.trg2trg_translator = Model(self.shared_encoder, self.trg_decoder,
-                                        self.trg_embed, self.trg_embed,
+                                        self.loaded_trg_embed, self.trg_embed,
                                         self.trg_vocab, self.trg_vocab)
 
     def __repr__(self) -> str:
@@ -369,14 +373,26 @@ def build_unsupervised_nmt_model(cfg: dict = None,
     trg_padding_idx = trg_vocab.stoi[PAD_TOKEN]
 
     # build source and target embedding layers
-    src_embed = PretrainedEmbeddings(**cfg["encoder"]["embeddings"],
-                                     vocab_size=len(src_vocab),
-                                     padding_idx=src_padding_idx,
-                                     vocab=src_vocab)
-    trg_embed = PretrainedEmbeddings(**cfg["decoder"]["embeddings"],
-                                     vocab_size=len(trg_vocab),
-                                     padding_idx=trg_padding_idx,
-                                     vocab=trg_vocab)
+    loaded_src_embed = PretrainedEmbeddings(**cfg["encoder"]["embeddings"],
+                                            vocab_size=len(src_vocab),
+                                            padding_idx=src_padding_idx,
+                                            vocab=src_vocab)
+
+    loaded_trg_embed = PretrainedEmbeddings(**cfg["decoder"]["embeddings"],
+                                            vocab_size=len(trg_vocab),
+                                            padding_idx=trg_padding_idx,
+                                            vocab=trg_vocab,
+                                            freeze=True)
+
+    src_embed = Embeddings(**cfg["encoder"]["embeddings"],
+                           vocab_size=len(src_vocab),
+                           padding_idx=src_padding_idx,
+                           freeze=False)
+
+    trg_embed = Embeddings(**cfg["decoder"]["embeddings"],
+                           vocab_size=len(trg_vocab),
+                           padding_idx=trg_padding_idx,
+                           freeze=False)
 
     # build shared encoder
     enc_dropout = cfg["encoder"].get("dropout", 0.)
@@ -412,7 +428,8 @@ def build_unsupervised_nmt_model(cfg: dict = None,
             **cfg["decoder"], encoder=shared_encoder, vocab_size=len(trg_vocab),
             emb_size=trg_embed.embedding_dim, emb_dropout=dec_emb_dropout)
 
-    model = UnsupervisedNMTModel(src_embed, trg_embed,
+    model = UnsupervisedNMTModel(loaded_src_embed, loaded_trg_embed,
+                                 src_embed, trg_embed,
                                  shared_encoder,
                                  src_decoder, trg_decoder,
                                  src_vocab, trg_vocab)

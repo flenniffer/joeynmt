@@ -74,10 +74,12 @@ class PretrainedEmbeddings(Embeddings):
                  scale: bool = False,
                  vocab_size: int = 0,
                  padding_idx: int = 1,
-                 freeze: bool = False,
+                 freeze: bool = True,
                  **kwargs):
         super(PretrainedEmbeddings, self).__init__(embedding_dim, scale, vocab_size, padding_idx, freeze, **kwargs)
         self.load_embeddings_from_file(embed_file, vocab)
+        if freeze:
+            freeze_params(self)
 
     def load_embeddings_from_file(self, embed_file: str, vocab: Vocabulary) -> None:
         """
@@ -87,7 +89,7 @@ class PretrainedEmbeddings(Embeddings):
         :param embed_file: path to file containing token and embedding, one per line, separated by space
         :param vocab: the vocabulary of the language of the embeddings
         """
-        loaded_embeds = ones((self.vocab_size, self.embedding_dim), dtype=float)
+        loaded_embeds = default_rng().normal(size=(self.vocab_size, self.embedding_dim))
         with open(embed_file, "r") as open_file:
             for line in open_file:
                 line = line.strip()
