@@ -620,8 +620,7 @@ class UnsupervisedNMTTrainManager:
 
         # files for logging and storing
         self.model_dir = make_model_dir(train_config["model_dir"],
-                                        overwrite=train_config.get(
-                                            "overwrite", False))
+                                        overwrite=train_config.get("overwrite", False))
         self.logger = make_logger("{}/train.log".format(self.model_dir))
         self.logging_freq = train_config.get("logging_freq", 100)
         self.valid_report_file = "{}/validations.txt".format(self.model_dir)
@@ -630,6 +629,8 @@ class UnsupervisedNMTTrainManager:
 
         # model
         self.model = model
+
+        # actual translation models
         self.src2src_model = self.model.src2src_translator
         self.src2trg_model = self.model.src2trg_translator
         self.trg2src_model = self.model.trg2src_translator
@@ -640,19 +641,23 @@ class UnsupervisedNMTTrainManager:
                        self.trg2src_model,
                        self.trg2trg_model]
 
+        # special symbols for src and trg language
         self.src_pad_index = self.model.src_pad_index
         self.src_bos_index = self.model.src_bos_index
         self.trg_pad_index = self.model.trg_pad_index
         self.trg_bos_index = self.model.trg_bos_index
 
+        # log trainable parameters of every model
         for model in self.models:
             self._log_parameters_list(model)
 
-        # data for on-the-fly back-translation
+        # information for on-the-fly back-translation
+        # fields or creating BT datasets
         self.fields = fields
         self.src_lang = config['data']['src']
         self.trg_lang = config['data']['trg']
         self.level = config['data']['level']
+        # needed to construct training examples from BT
         self.join_char = " " if self.level in ["word", "bpe"] else ""
 
         # normalization
@@ -735,6 +740,7 @@ class UnsupervisedNMTTrainManager:
                 "valid options: 'loss', 'ppl', 'eval_metric'.")
 
         # learning rate scheduling
+        # define scheduler for every translation direction
         self.src2src_scheduler, self.src2src_scheduler_at = build_scheduler(
             config=train_config,
             scheduler_mode="min" if self.minimize_metric else "max",
@@ -767,7 +773,6 @@ class UnsupervisedNMTTrainManager:
                               self.trg2trg_scheduler_at]
 
         # data & batch handling
-        self.level = config["data"]["level"]
         if self.level not in ["word", "bpe", "char"]:
             raise ConfigurationError("Invalid segmentation level. "
                                      "Valid options: 'word', 'bpe', 'char'.")
@@ -779,7 +784,8 @@ class UnsupervisedNMTTrainManager:
                                                 self.batch_size)
         self.eval_batch_type = train_config.get("eval_batch_type",
                                                 self.batch_type)
-        # no batch multiplier support
+
+        # no batch multiplier support for unsupervised NMT
 
         # CPU / GPU
         self.use_cuda = train_config["use_cuda"]
@@ -806,7 +812,7 @@ class UnsupervisedNMTTrainManager:
         self.is_best_averaged = lambda avg_score: avg_score < self.best_averaged_ckpt_score \
             if self.minimize_metric else avg_score > self.best_averaged_ckpt_score
 
-        # load model parameters
+        # load model parameters if desired
         if "load_model" in train_config.keys():
             model_load_path = train_config["load_model"]
             self.logger.info("Loading model from %s", model_load_path)
@@ -876,8 +882,8 @@ class UnsupervisedNMTTrainManager:
         self.total_tokens = model_checkpoint["total_tokens"]
 
         if not reset_best_ckpt:
-            self.best_averaged_ckpt_score = model_checkpoint["best_averaged_ckpt_score"]
-            self.best_averaged_ckpt_iteration = model_checkpoint["best_averaged_ckpt_iteration"]
+            self.best_averaged_ckpt_score = model_checkpoint["best_ckpt_score"]
+            self.best_averaged_ckpt_iteration = model_checkpoint["best_ckpt_iteration"]
         else:
             self.logger.info("Reset tracking of the best checkpoint.")
 
@@ -940,6 +946,7 @@ class UnsupervisedNMTTrainManager:
     def _log_parameters_list(self, model: Model) -> None:
         """
         Write all model parameters (name, shape) to the log.
+        Assert that the model has trainable parameters.
         """
         model_parameters = filter(lambda p: p.requires_grad,
                                   model.parameters())
@@ -954,8 +961,21 @@ class UnsupervisedNMTTrainManager:
                            BTsrc: Dataset, BTtrg: Dataset,
                            dev_src2trg: Dataset, dev_trg2src: Dataset) -> None:
         """
-        TODO
+        Training procedure for unsupervised NMT.
+        Train all four models at the same time by making four forward passes during each step:
+        * src2src: Input noised src data and output denoised src data
+        * trg2trg: Input noised trg data and output denoised trg data
+        * trg2src: Input back-translated trg data and output src data
+        * src2trg: Input back-translated src data and output trg data
+
+        :param src2src: Dataset in src language containing noised sources and denoised references
+        :param trg2trg: Dataset in trg language containing noised sources and denoised references
+        :param BTsrc: Monolingual dataset containing denoised src language data
+        :param BTtrg: Monolingual dataset containing denoised trg language data
+        :param dev_src2trg: Dataset containing src language sources and trg language references
+        :param dev_trg2src: Dataset containing trg language sources and src language references
         """
+        # make data iters of the four datasets
         src2src_iter = make_data_iter(dataset=src2src,
                                       batch_size=self.batch_size,
                                       batch_type=self.batch_type,
@@ -973,6 +993,7 @@ class UnsupervisedNMTTrainManager:
                                     batch_type=self.batch_type,
                                     train=True, shuffle=self.shuffle)
 
+        # training loop
         for epoch_no in range(self.epochs):
             self.logger.info("EPOCH %d", epoch_no + 1)
 
@@ -996,13 +1017,14 @@ class UnsupervisedNMTTrainManager:
                                                                               iter(trg2trg_iter),
                                                                               iter(BTsrc_iter),
                                                                               iter(BTtrg_iter)):
-                # src2src denoising
+                # src2src denoising task
                 src2src_batch = Batch(src2src_batch, pad_index=self.src_pad_index, use_cuda=self.use_cuda)
 
                 src2src_batch_loss = self._train_batch(src2src_batch, model=self.src2src_model,
                                                        optimizer=self.src2src_optimizer,
                                                        loss=self.src2src_loss)
 
+                # track loss on src2src denoising task
                 self.tb_writer.add_scalar("train/train_src2src_batch_loss",
                                           src2src_batch_loss, self.steps)
 
@@ -1011,13 +1033,14 @@ class UnsupervisedNMTTrainManager:
 
                 self._scheduler_step(self.src2src_scheduler, self.src2src_scheduler_at)
 
-                # trg2trg denoising
+                # trg2trg denoising task
                 trg2trg_batch = Batch(trg2trg_batch, pad_index=self.trg_pad_index, use_cuda=self.use_cuda)
 
                 trg2trg_batch_loss = self._train_batch(trg2trg_batch, model=self.trg2trg_model,
                                                        optimizer=self.trg2trg_optimizer,
                                                        loss=self.trg2trg_loss)
 
+                # track loss on trg2trg denoising task
                 self.tb_writer.add_scalar("train/train_trg2trg_batch_loss",
                                           trg2trg_batch_loss, self.steps)
 
@@ -1027,14 +1050,15 @@ class UnsupervisedNMTTrainManager:
                 self._scheduler_step(self.trg2trg_scheduler, self.trg2trg_scheduler_at)
 
                 # On-the-fly back-translation
-                # TODO MAKE IT WORK
-                # Backtranslate src
+                # Backtranslate src language sources to trg language
                 BTsrc_batch = Batch(BTsrc_batch, pad_index=self.src_pad_index, use_cuda=self.use_cuda)
 
                 src_sentences, trg_hypotheses = self._backtranslate(model=self.src2trg_model,
                                                                     batch=BTsrc_batch)
 
-                # create dataset with BT as source
+                # create dataset with trg language BT data as sources
+                # src language data as references
+                # this 'dataset' really only consists of the one batch we back-translated
                 BT_trg2src = BacktranslationDataset(trg_hypotheses, src_sentences,
                                                     self.fields['src'][self.trg_lang],
                                                     self.fields['trg'][self.src_lang])
@@ -1049,18 +1073,20 @@ class UnsupervisedNMTTrainManager:
                                                        optimizer=self.trg2src_optimizer,
                                                        loss=self.trg2src_loss)
 
+                # track loss on trg2src (back-translation) task
                 self.tb_writer.add_scalar("train/train_trg2src_batch_loss",
                                           trg2src_batch_loss, self.steps)
 
                 trg2src_batch_loss = trg2src_batch_loss.detach().cpu().numpy()
                 epoch_loss += trg2src_batch_loss
 
-                # Backtranslate trg
+                # Backtranslate trg language sources to src language
                 BTtrg_batch = Batch(BTtrg_batch, pad_index=self.trg_pad_index, use_cuda=self.use_cuda)
 
                 trg_sentences, src_hypotheses = self._backtranslate(model=self.trg2src_model,
                                                                     batch=BTtrg_batch)
-                # create dataset with BT as source
+                # create dataset with src language BT as source
+                # trg language data as references
                 BT_src2trg = BacktranslationDataset(src_hypotheses, trg_sentences,
                                                     self.fields['src'][self.src_lang],
                                                     self.fields['trg'][self.trg_lang])
@@ -1077,6 +1103,7 @@ class UnsupervisedNMTTrainManager:
                                                        optimizer=self.src2trg_optimizer,
                                                        loss=self.src2trg_loss)
 
+                # track loss on src2trg (back-translation) task
                 self.tb_writer.add_scalar("train/train_src2trg_batch_loss",
                                           src2trg_batch_loss, self.steps)
 
@@ -1161,11 +1188,12 @@ class UnsupervisedNMTTrainManager:
                     averaged_ppl = (src2trg_ppl + trg2src_ppl) / 2
                     self.logger.info(
                         'Validation result (greedy) at epoch %3d, '
-                        'step %8d: %s: %6.2f, loss: %8.4f, ppl: %8.4f, '
+                        'step %8d: averaged %s: %6.2f, averaged loss: %8.4f, averaged ppl: %8.4f, '
                         'duration: %.4fs', epoch_no + 1, self.steps,
                         self.eval_metric, averaged_score, averaged_loss,
                         averaged_ppl, valid_duration)
 
+                # minimum lr was reached
                 if self.stop:
                     break
 
@@ -1180,7 +1208,7 @@ class UnsupervisedNMTTrainManager:
             self.logger.info('Training ended after %3d epochs.', epoch_no + 1)
 
         self.logger.info('Best validation result (greedy) at step '
-                         '%8d: %6.2f %s.', self.best_averaged_ckpt_iteration,
+                         '%8d: %6.2f averaged %s.', self.best_averaged_ckpt_iteration,
                          self.best_averaged_ckpt_score,
                          self.early_stopping_metric)
 
@@ -1231,14 +1259,20 @@ class UnsupervisedNMTTrainManager:
         if scheduler is not None and scheduler_at == "step":
             scheduler.step()
 
-    def _backtranslate(self, model: Model, batch: Batch):
+    def _backtranslate(self, model: Model, batch: Batch) -> (List[str], List[str]):
         """
-        Always greedy decoding (beam size = 1)
-        TODO
+        Translate a batch of training data.
+        Always uses greedy decoding (beam size = 1).
+        Returns list of source sentences and list of translations that can be turned into a Backtranslation dataset.
+
+        :param model: Model to use for translation
+        :param batch: Batch to translate
+        :return: list of source sentences and list of translations
         """
         # disable dropout
         model.eval()
 
+        # get translations for batch
         with torch.no_grad():
             sort_reverse_index = batch.sort_by_src_lengths()
             output, _ = model.run_batch(batch,
@@ -1256,9 +1290,18 @@ class UnsupervisedNMTTrainManager:
 
         return src_sentences, trg_hypotheses
 
-
     def _validate(self, translation_direction: str, data: Dataset, model: Model, loss: torch.nn.Module,
-                  optimizer: torch.optim.Optimizer) -> (int, int):
+                  optimizer: torch.optim.Optimizer):
+        """
+        Validate the model on the given dataset and log the validation results.
+
+        :param translation_direction: string describing the translation direction, for logging
+        :param data: Dataset for validation
+        :param model: Model to use for translation of data
+        :param loss: Loss function belonging to the model
+        :param optimizer: Optimizer belonging to the model
+        :return: checkpoint score, learning rate, validation loss and validation perplexity
+        """
         valid_score, valid_loss, valid_ppl, valid_sources, \
         valid_sources_raw, valid_references, valid_hypotheses, \
         valid_hypotheses_raw, valid_attention_scores = \
@@ -1275,12 +1318,14 @@ class UnsupervisedNMTTrainManager:
                 batch_type=self.eval_batch_type,
                 postprocess=True  # always remove BPE for validation
             )
+        # log validation loss, score and perplexity
         self.tb_writer.add_scalar("valid/valid_{}_loss".format(translation_direction),
                                   valid_loss, self.steps)
         self.tb_writer.add_scalar("valid/valid_{}_score".format(translation_direction),
                                   valid_score, self.steps)
         self.tb_writer.add_scalar("valid/valid_{}_ppl".format(translation_direction),
                                   valid_ppl, self.steps)
+
         if self.early_stopping_metric == "loss":
             ckpt_score = valid_loss
         elif self.early_stopping_metric in ["ppl", "perplexity"]:
@@ -1293,12 +1338,14 @@ class UnsupervisedNMTTrainManager:
             lr = param_group['lr']
 
         # append to validation report
+        # new_best flag is not used at the moment since there is no individual score tracking for translation directions
         self._add_report(
             optimizer=optimizer,
             valid_score=valid_score, valid_loss=valid_loss,
             valid_ppl=valid_ppl, eval_metric=self.eval_metric,
             new_best=False)
 
+        # log selected examples
         self._log_examples(
             sources_raw=[v for v in valid_sources_raw],
             sources=valid_sources,
@@ -1348,7 +1395,7 @@ class UnsupervisedNMTTrainManager:
     def _store_outputs(self, hypotheses: List[str]) -> None:
         """
         Write current validation outputs to file in `self.model_dir.`
-        :param hypotheses: list of strings
+        :param hypotheses: list of hypotheses
         """
         current_valid_output_file = "{}/{}.hyps".format(self.model_dir,
                                                         self.steps)
@@ -1362,7 +1409,7 @@ class UnsupervisedNMTTrainManager:
                       hypotheses_raw: List[List[str]] = None,
                       references_raw: List[List[str]] = None) -> None:
         """
-        Log a the first `self.log_valid_sents` sentences from given examples.
+        Log the `self.log_valid_sents` sentences from given examples.
         :param sources: decoded sources (list of strings)
         :param hypotheses: decoded hypotheses (list of strings)
         :param references: decoded references (list of strings)
@@ -1400,10 +1447,12 @@ def train(cfg_file: str) -> None:
     # set the random seed
     set_seed(seed=cfg["training"].get("random_seed", 42))
 
+    # get model architecture
     architecture = cfg["model"].get("architecture", "encoder-decoder")
     if architecture not in ["encoder-decoder", "unsupervised-nmt"]:
         raise ConfigurationError("Supported architectures: 'encoder-decoder' and 'unsupervised-nmt'")
 
+    # original JoeyNMT code for vanilla encoder-decoder model
     if architecture == "encoder-decoder":
         # load the data
         train_data, dev_data, test_data, src_vocab, trg_vocab = \
@@ -1444,6 +1493,7 @@ def train(cfg_file: str) -> None:
         test(cfg_file, ckpt=ckpt, output_path=output_path, logger=trainer.logger)
 
     else:
+        # Unsupervised NMT model training
         # load the data
         src2src, trg2trg, BTsrc, BTtrg, \
             dev_src2trg, dev_trg2src, \
@@ -1463,12 +1513,14 @@ def train(cfg_file: str) -> None:
         # log all entries of config
         log_cfg(cfg, trainer.logger)
 
+        # log information on data
         log_unsupervised_data_info(src2src=src2src, trg2trg=trg2trg, BTsrc=BTsrc, BTtrg=BTtrg,
                                    dev_src2trg=dev_src2trg, dev_trg2src=dev_trg2src,
                                    test_src2trg=test_src2trg, test_trg2src=test_trg2src,
                                    src_vocab=src_vocab, trg_vocab=trg_vocab,
                                    logging_function=trainer.logger.info)
 
+        # log model
         trainer.logger.info(str(model))
 
         # store the vocabs

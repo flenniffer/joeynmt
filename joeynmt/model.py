@@ -212,16 +212,17 @@ class UnsupervisedNMTModel:
         """
         Create a new unsupervised NMT model.
         Architecture follows Artetxe et al. (2018): Unsupervised Neural Machine Translation.
-        TODO
-        :param src_embed:
-        :param trg_embed:
-        :param encoder:
-        :param src_decoder:
-        :param trg_decoder:
-        :param src_vocab:
-        :param trg_vocab:
+
+        :param loaded_src_embed: src language embeddings, loaded from mapped embedding file
+        :param loaded_trg_embed: trg language embeddings, loaded from mapped embedding file
+        :param src_embed: src language embeddings, randomly initialised
+        :param trg_embed: trg language embeddings, randomly initialised
+        :param encoder: shared encoder
+        :param src_decoder: src language decoder
+        :param trg_decoder: trg language decoder
+        :param src_vocab: src language vocabulary
+        :param trg_vocab: trg language vocabulary
         """
-        super(UnsupervisedNMTModel, self).__init__()
         self.loaded_src_embed = loaded_src_embed
         self.loaded_trg_embed = loaded_trg_embed
         self.src_embed = src_embed
@@ -238,8 +239,9 @@ class UnsupervisedNMTModel:
         self.trg_pad_index = self.trg_vocab.stoi[PAD_TOKEN]
         self.trg_eos_index = self.trg_vocab.stoi[EOS_TOKEN]
 
-        # Need four translators for four directions
+        # Need four translators for four 'directions'
         # To optimize individual parameters
+        # Every translator is a Model (see above)
         self.src2src_translator = Model(self.shared_encoder, self.src_decoder,
                                         self.loaded_src_embed, self.src_embed,
                                         self.src_vocab, self.src_vocab)
@@ -263,13 +265,13 @@ class UnsupervisedNMTModel:
                f"\tencoder={self.shared_encoder},\n" \
                f"\tsrc_decoder={self.src_decoder},\n" \
                f"\ttrg_decoder={self.trg_decoder},\n" \
-               f"\tsrc_embed={self.src_embed},\n" \
-               f"\ttrg_embed={self.trg_embed})"
+               f"\tsrc_embed={self.loaded_src_embed},\n" \
+               f"\ttrg_embed={self.loaded_trg_embed})"
 
 
 def build_model(cfg: dict = None,
                 src_vocab: Vocabulary = None,
-                trg_vocab: Vocabulary = None) -> Model:
+                trg_vocab: Vocabulary = None):
     """
     Build and initialize the model according to the configuration.
 
@@ -367,16 +369,23 @@ def build_unsupervised_nmt_model(cfg: dict = None,
                                  src_vocab: Vocabulary = None,
                                  trg_vocab: Vocabulary = None) -> UnsupervisedNMTModel:
     """
-    TODO
+    Build an UnsupervisedNMTModel.
+
+    :param cfg: model configuration
+    :param src_vocab: Vocabulary for the src language
+    :param trg_vocab: Vocabulary for the trg language
+    :return: Unsupervised NMT model as specified in cfg
     """
     src_padding_idx = src_vocab.stoi[PAD_TOKEN]
     trg_padding_idx = trg_vocab.stoi[PAD_TOKEN]
 
     # build source and target embedding layers
+    # embeddings in the encoder are pretrained and stay fixed
     loaded_src_embed = PretrainedEmbeddings(**cfg["encoder"]["embeddings"],
                                             vocab_size=len(src_vocab),
                                             padding_idx=src_padding_idx,
-                                            vocab=src_vocab)
+                                            vocab=src_vocab,
+                                            freeze=True)
 
     loaded_trg_embed = PretrainedEmbeddings(**cfg["decoder"]["embeddings"],
                                             vocab_size=len(trg_vocab),
@@ -384,6 +393,7 @@ def build_unsupervised_nmt_model(cfg: dict = None,
                                             vocab=trg_vocab,
                                             freeze=True)
 
+    # embeddings in the decoder are randomly initialised and will be learned
     src_embed = Embeddings(**cfg["encoder"]["embeddings"],
                            vocab_size=len(src_vocab),
                            padding_idx=src_padding_idx,
@@ -410,7 +420,7 @@ def build_unsupervised_nmt_model(cfg: dict = None,
                                           emb_size=src_embed.embedding_dim,
                                           emb_dropout=enc_emb_dropout)
 
-    # build source and target decoder
+    # build src and trg language decoder
     dec_dropout = cfg["decoder"].get("dropout", 0.)
     dec_emb_dropout = cfg["decoder"]["embeddings"].get("dropout", dec_dropout)
     if cfg["decoder"].get("type", "recurrent") == "transformer":
@@ -428,16 +438,18 @@ def build_unsupervised_nmt_model(cfg: dict = None,
             **cfg["decoder"], encoder=shared_encoder, vocab_size=len(trg_vocab),
             emb_size=trg_embed.embedding_dim, emb_dropout=dec_emb_dropout)
 
+    # build unsupervised NMT model
     model = UnsupervisedNMTModel(loaded_src_embed, loaded_trg_embed,
                                  src_embed, trg_embed,
                                  shared_encoder,
                                  src_decoder, trg_decoder,
                                  src_vocab, trg_vocab)
 
-    # initialise model, embed_initializer should be none
-    # so loaded embeddings won't be overwritten
+    # initialise model
+    # embed_initializer should be none so loaded encoder embeddings won't be overwritten
     initialize_model(model.src2src_translator, cfg, src_padding_idx, src_padding_idx)
     initialize_model(model.src2trg_translator, cfg, src_padding_idx, trg_padding_idx)
     initialize_model(model.trg2src_translator, cfg, trg_padding_idx, src_padding_idx)
     initialize_model(model.trg2src_translator, cfg, trg_padding_idx, trg_padding_idx)
+
     return model

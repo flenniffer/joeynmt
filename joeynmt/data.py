@@ -6,7 +6,7 @@ import sys
 import random
 import os
 import os.path
-from typing import Optional
+from typing import Optional, List
 
 from torchtext.datasets import TranslationDataset
 from torchtext import data
@@ -122,19 +122,31 @@ def load_unsupervised_data(data_cfg: dict) \
             Vocabulary, Vocabulary,
             dict):
     """
+    Load train, dev and optionally test data as specified in configuration.
+    Expected file extensions for train data are `.(noised|denoised).(src|trg)`
+    Vocabularies are created from the training set with a limit of `voc_limit`
+    tokens and a minimum token frequency of `voc_min_freq`
+    (specified in the configuration dictionary).
+
+    The training data is filtered to include sentences up to `max_sent_length`
+    on source and target side.
+
+    All four resulting training corpora have to have the same length.
+    Selecting a random subset of the training data is not supported.
+
     :param data_cfg: configuration dictionary for data
     :return:
-        - src2src:
-        - trg2trg:
-        - BTsrc:
-        - BTtrg:
-        - dev_src2trg:
-        - dev_trg2src:
-        - test_src2trg:
-        - test_trg2src:
-        - src_vocab:
-        - trg_vocab:
-        - fields:
+        - src2src: Dataset for src to src denoising task
+        - trg2trg: Dataset for trg to trg denoising task
+        - BTsrc: Monolingual dataset containing denoised src data for BT
+        - BTtrg: Monolingual dataset containing denoised trg data for BT
+        - dev_src2trg: Dataset for src to trg validation
+        - dev_trg2src: Dataset for trg to src validation
+        - test_src2trg: Dataset for testing src to trg translation, optional
+        - test_trg2src: Dataset for testing src to trg translation, optional
+        - src_vocab: Vocabulary of src language
+        - trg_vocab: Vocabulary of trg language
+        - fields: Dictionary containing source and target fields for src and trg language, needed for on-the-fly BT
     """
     src_lang = data_cfg["src"]
     trg_lang = data_cfg["trg"]
@@ -153,15 +165,18 @@ def load_unsupervised_data(data_cfg: dict) \
     tok_fun = lambda s: list(s) if level == "char" else s.split()
 
     # Make four fields
-    # Source and target language each get a source and target field
+    # Src and trg language each get a source and target field
+    # Because field vocabulary needs to be once from src language, and once from trg language
 
     # Source fields:
+    # for src language
     src_src_field = data.Field(init_token=None, eos_token=EOS_TOKEN,
                                pad_token=PAD_TOKEN, tokenize=tok_fun,
                                batch_first=True, lower=lowercase,
                                unk_token=UNK_TOKEN,
                                include_lengths=True)
 
+    # for trg language
     trg_src_field = data.Field(init_token=None, eos_token=EOS_TOKEN,
                                pad_token=PAD_TOKEN, tokenize=tok_fun,
                                batch_first=True, lower=lowercase,
@@ -169,12 +184,14 @@ def load_unsupervised_data(data_cfg: dict) \
                                include_lengths=True)
 
     # Target fields:
+    # for src language
     src_trg_field = data.Field(init_token=BOS_TOKEN, eos_token=EOS_TOKEN,
                                pad_token=PAD_TOKEN, tokenize=tok_fun,
                                unk_token=UNK_TOKEN,
                                batch_first=True, lower=lowercase,
                                include_lengths=True)
 
+    # for trg language
     trg_trg_field = data.Field(init_token=BOS_TOKEN, eos_token=EOS_TOKEN,
                                pad_token=PAD_TOKEN, tokenize=tok_fun,
                                unk_token=UNK_TOKEN,
@@ -188,7 +205,6 @@ def load_unsupervised_data(data_cfg: dict) \
 
     # datasets for denoising
     # 'translate' from noised input to denoised output
-
     src2src = TranslationDataset(path=train_path,
                                  exts=("." + noised_ext + "." + src_lang,
                                        "." + denoised_ext + "." + src_lang),
@@ -206,9 +222,9 @@ def load_unsupervised_data(data_cfg: dict) \
                                  and len(vars(x)['trg']) <= max_sent_length)
 
     # datasets for BT
-    # need denoised src data in order to create back-translation on-the-fly
-    # then use (BT, denoised trg data) tuples as training examples
-    # so for now, create (denoised src data, denoised trg data) datasets in the same language
+    # need denoised sources in order to create back-translations on-the-fly
+    # then use (BT, denoised sources) tuples as training examples
+    # so for now, create monolingual datasets of the denoised sources
     BTsrc = MonoDataset(path=train_path,
                         ext="." + denoised_ext + "." + src_lang,
                         field=fields['src'][src_lang],
@@ -219,22 +235,6 @@ def load_unsupervised_data(data_cfg: dict) \
                         field=fields['src'][trg_lang],
                         filter_pred=lambda x: len(vars(x)['src']) <= max_sent_length)
 
-    """BTsrc = TranslationDataset(path=train_path,
-                               exts=("." + denoised_ext + "." + src_lang,
-                                     "." + denoised_ext + "." + src_lang),
-                               fields=(fields['src'][src_lang], fields['trg'][src_lang]),
-                               filter_pred=
-                               lambda x: len(vars(x)['src']) <= max_sent_length
-                               and len(vars(x)['trg']) <= max_sent_length)"""
-
-    """BTtrg = TranslationDataset(path=train_path,
-                               exts=("." + denoised_ext + "." + trg_lang,
-                                     "." + denoised_ext + "." + trg_lang),
-                               fields=(fields['src'][trg_lang], fields['trg'][trg_lang]),
-                               filter_pred=
-                               lambda x: len(vars(x)['src']) <= max_sent_length
-                               and len(vars(x)['trg']) <= max_sent_length)"""
-
     src_max_size = data_cfg.get("src_voc_limit", sys.maxsize)
     src_min_freq = data_cfg.get("src_voc_min_freq", 1)
     trg_max_size = data_cfg.get("trg_voc_limit", sys.maxsize)
@@ -243,28 +243,13 @@ def load_unsupervised_data(data_cfg: dict) \
     src_vocab_file = data_cfg.get("src_vocab", None)
     trg_vocab_file = data_cfg.get("trg_vocab", None)
 
+    # build vocab based on denoised data (field="trg")
     src_vocab = build_vocab(field="trg", min_freq=src_min_freq,
                             max_size=src_max_size,
                             dataset=src2src, vocab_file=src_vocab_file)
     trg_vocab = build_vocab(field="trg", min_freq=trg_min_freq,
                             max_size=trg_max_size,
                             dataset=trg2trg, vocab_file=trg_vocab_file)
-
-    def _choose_random_subset(train: Dataset, train_subset: int):
-        keep_ratio = train_subset / len(train)
-        # TODO wont work like this
-        # ValueError: not enough values to unpack (expected 2, got 1) from random.getstate()
-        keep, _ = train.split(split_ratio=[keep_ratio, 1 - keep_ratio],
-                              random_state=random.getstate())
-        return keep
-
-    random_train_subset = data_cfg.get("random_train_subset", -1)
-    if random_train_subset > -1:
-        # select this many training examples randomly and discard the rest
-        src2src = _choose_random_subset(src2src, random_train_subset)
-        trg2trg = _choose_random_subset(trg2trg, random_train_subset)
-        BTsrc = _choose_random_subset(BTsrc, random_train_subset)
-        BTtrg = _choose_random_subset(BTtrg, random_train_subset)
 
     assert len(src2src) == len(trg2trg) == len(BTsrc) == len(BTtrg), \
         "All training sets must have equal length for unsupervised NMT."
@@ -304,6 +289,7 @@ def load_unsupervised_data(data_cfg: dict) \
            test_src2trg, test_trg2src, \
            src_vocab, trg_vocab, \
            fields
+
 
 # pylint: disable=global-at-module-level
 global max_src_in_batch, max_tgt_in_batch
@@ -406,9 +392,22 @@ class BacktranslationDataset(Dataset):
     def sort_key(ex):
         return len(ex.src)
 
-    def __init__(self, src_ex, trg_ex, src_field, trg_field, **kwargs) -> None:
+    def __init__(self, src_ex: List[str], trg_ex: List[str],
+                 src_field: Field, trg_field: Field, **kwargs) -> None:
+        """
+        Create a dataset with given sources and references and corresponding fields.
+
+        :param src_ex: List of strings, source sentences
+        :param trg_ex: List of strings, references
+        :param src_field: Field for source sentences
+        :param trg_field: Field for references
+        :param kwargs: Passed to the constructor of data.Dataset
+        """
         fields = [('src', src_field), ('trg', trg_field)]
+
+        # load source sentence and reference as data.Example and append to list
         examples = []
         for src_sent, trg_hypothesis in zip(src_ex, trg_ex):
             examples.append(data.Example.fromlist([src_sent, trg_hypothesis], fields))
+
         super(BacktranslationDataset, self).__init__(examples, fields, **kwargs)

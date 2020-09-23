@@ -7,7 +7,6 @@ from torch import nn, Tensor, from_numpy
 
 from joeynmt.helpers import freeze_params
 from joeynmt.vocabulary import Vocabulary
-from joeynmt.constants import UNK_TOKEN, BOS_TOKEN, EOS_TOKEN, PAD_TOKEN
 
 
 class Embeddings(nn.Module):
@@ -65,7 +64,7 @@ class Embeddings(nn.Module):
 class PretrainedEmbeddings(Embeddings):
 
     """
-    Loads embeddings from an embeddings file.
+    Loads embeddings from an embeddings file. Frozen by default.
     """
     def __init__(self,
                  embed_file: str,
@@ -77,19 +76,25 @@ class PretrainedEmbeddings(Embeddings):
                  freeze: bool = True,
                  **kwargs):
         super(PretrainedEmbeddings, self).__init__(embedding_dim, scale, vocab_size, padding_idx, freeze, **kwargs)
+
+        # overwrite lut with embeddings from embed_file
         self.load_embeddings_from_file(embed_file, vocab)
+
         if freeze:
             freeze_params(self)
 
     def load_embeddings_from_file(self, embed_file: str, vocab: Vocabulary) -> None:
         """
         Overwrites the initial Embedding Tensor with the embeddings from the embedding file.
-        Tokens without a specified embedding are initialised with ones.
+        Tokens without a specified embedding are initialised from a normal distribution.
 
-        :param embed_file: path to file containing token and embedding, one per line, separated by space
-        :param vocab: the vocabulary of the language of the embeddings
+        :param embed_file: path to file in word2vec text format
+        :param vocab: the vocabulary of the model
         """
+        # initialise all embeddings from a normal distribution
         loaded_embeds = default_rng().normal(size=(self.vocab_size, self.embedding_dim))
+
+        # load embeddings from file if they are present in the vocabulary
         with open(embed_file, "r") as open_file:
             for line in open_file:
                 line = line.strip()
@@ -98,14 +103,9 @@ class PretrainedEmbeddings(Embeddings):
                     idx = vocab.stoi.get(token, None)  # get index of token in vocabulary
                     if idx is None:  # token is not in vocabulary
                         continue
-                    print(token)
                     embedding = asarray(embedding_str.split(" "), dtype=float)
                     assert embedding.shape[0] == self.embedding_dim, "Dimensionality of loaded embedding does not match"
-                    loaded_embeds[idx] = embedding  # replace ones at idx with correct embedding
+                    loaded_embeds[idx] = embedding  # replace with correct embedding
 
-        # initialise special symbols from a normal distribution
-        specials = [vocab.stoi[special] for special in [UNK_TOKEN, BOS_TOKEN, EOS_TOKEN, PAD_TOKEN]]
-        for idx in specials:
-            loaded_embeds[idx] = default_rng().normal(size=(self.embedding_dim,))
         # overwrite Embedding Tensor
         self.lut.weight.data.copy_(from_numpy(loaded_embeds))
