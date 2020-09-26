@@ -1080,6 +1080,8 @@ class UnsupervisedNMTTrainManager:
                 trg2src_batch_loss = trg2src_batch_loss.detach().cpu().numpy()
                 epoch_loss += trg2src_batch_loss
 
+                self._scheduler_step(self.trg2src_scheduler, self.trg2src_scheduler_at)
+
                 # Backtranslate trg language sources to src language
                 BTtrg_batch = Batch(BTtrg_batch, pad_index=self.trg_pad_index, use_cuda=self.use_cuda)
 
@@ -1109,6 +1111,8 @@ class UnsupervisedNMTTrainManager:
 
                 src2trg_batch_loss = src2trg_batch_loss.detach().cpu().numpy()
                 epoch_loss += src2trg_batch_loss
+
+                self._scheduler_step(self.src2trg_scheduler, self.src2trg_scheduler_at)
 
                 # increment step counter after all four tasks
                 self.steps += 1
@@ -1178,8 +1182,17 @@ class UnsupervisedNMTTrainManager:
                             self.logger.info("Saving new checkpoint.")
                             self._save_checkpoint()
 
-                    # check if both lr are smaller than minimum lr
-                    if src2trg_lr < self.learning_rate_min and trg2src_lr < self.learning_rate_min:
+                    # check if all lr are smaller than minimum lr
+                    src2src_lr = -1
+                    for param_group in self.src2src_optimizer.param_groups:
+                        src2src_lr = param_group['lr']
+
+                    trg2trg_lr = -1
+                    for param_group in self.trg2trg_optimizer.param_groups:
+                        trg2trg_lr = param_group['lr']
+
+                    if src2trg_lr < self.learning_rate_min and trg2src_lr < self.learning_rate_min \
+                            and src2src_lr < self.learning_rate_min and trg2trg_lr < self.learning_rate_min:
                         self.stop = True
 
                     valid_duration = time.time() - valid_start_time
