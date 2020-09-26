@@ -211,6 +211,7 @@ def test(cfg_file,
     eval_metric = cfg["training"]["eval_metric"]
     max_output_length = cfg["training"].get("max_output_length", None)
 
+    # original encoder-decoder testing
     if architecture == "encoder-decoder":
         if "test" not in cfg["data"].keys():
             raise ValueError("Test data must be specified in config.")
@@ -285,6 +286,7 @@ def test(cfg_file,
                         out_file.write(hyp + "\n")
                 logger.info("Translations saved to: %s", output_path_set)
     else:
+        # unsupervised NMT testing
         if "src2trg_test" not in cfg["data"].keys() or "trg2src_test" not in cfg["data"].keys():
             raise ValueError("Test data must be specified in config.")
         # load the data
@@ -323,10 +325,12 @@ def test(cfg_file,
             postprocess = True
 
         for translation_direction, dataset_dict in data_to_predict.items():
+            # choose correct translator
             if translation_direction == "src2trg":
                 model_to_use = model.src2trg_translator
             else:
                 model_to_use = model.trg2src_translator
+
             for dataset_name, dataset in dataset_dict.items():
                 score, loss, ppl, sources, sources_raw, references, hypotheses, \
                 hypotheses_raw, attention_scores = validate_on_data(

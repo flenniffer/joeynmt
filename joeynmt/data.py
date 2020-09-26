@@ -279,6 +279,7 @@ def load_unsupervised_data(data_cfg: dict) \
     test_trg2src = _make_test_set(trg2src_test_path, trg_lang, src_lang)
 
     # set vocab of all fields
+    # this is why we need four fields in total
     src_src_field.vocab = src_vocab
     trg_src_field.vocab = trg_vocab
     src_trg_field.vocab = src_vocab

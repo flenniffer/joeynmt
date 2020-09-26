@@ -122,11 +122,27 @@ def set_seed(seed: int) -> None:
     np.random.seed(seed)
     random.seed(seed)
 
+
 def log_unsupervised_data_info(src2src: Dataset, trg2trg: Dataset, BTsrc: Dataset, BTtrg: Dataset,
                                dev_src2trg: Dataset, dev_trg2src: Dataset,
                                test_src2trg: Dataset, test_trg2src: Dataset,
                                src_vocab: Vocabulary, trg_vocab: Vocabulary,
                                logging_function: Callable[[str], None]) -> None:
+    """
+    Log statistics of data and vocabulary for unsupervised NMT architecture.
+
+    :param src2src: src2src denoising dataset
+    :param trg2trg: trg2trg denoising dataset
+    :param BTsrc: monolingual dataset for src language back-translation
+    :param BTtrg: monolingual dataset for trg language back-translation
+    :param dev_src2trg: src2trg development set
+    :param dev_trg2src: trg2src development set
+    :param test_src2trg: src2trg test set, optional
+    :param test_trg2src: trg2src test set, optional
+    :param src_vocab: src language vocabulary
+    :param trg_vocab: trg language vocabulary
+    :param logging_function: logging function of log
+    """
     logging_function("Train data set sizes: \n\tsrc2src %d,\n\ttrg2trg %d,\n\tBTsrc %d,\n\tBTtrg %d",
                      len(src2src), len(trg2trg), len(BTsrc), len(BTtrg))
     logging_function("Dev data set sizes: \n\tsrc2trg %d,\n\ttrg2src %d",
@@ -142,6 +158,7 @@ def log_unsupervised_data_info(src2src: Dataset, trg2trg: Dataset, BTsrc: Datase
 
     logging_function("Number of Src words (types): %d", len(src_vocab))
     logging_function("Number of Trg words (types): %d", len(trg_vocab))
+
 
 def log_data_info(train_data: Dataset, valid_data: Dataset, test_data: Dataset,
                   src_vocab: Vocabulary, trg_vocab: Vocabulary,
