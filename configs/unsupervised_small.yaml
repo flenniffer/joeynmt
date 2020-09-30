@@ -1,0 +1,86 @@
+name: "Unsupervised NMT example config using transformer"
+
+# This config gives an example of how to use the unsupervised NMT architecture in JoeyNMT
+# I have kept the paths to my data files so you can try it out if you want to
+
+data:
+  # Training data is expected at {train}.{noised|denoised}.{src|trg} for noised/denoised src/trg language data
+  # All training data has to be the same size!
+  src: "de"                # "source" language extension
+  trg: "en"                # "target" language extension
+  noised: "noised"         # noisy data extension
+  denoised: "denoised"     # real data extension
+  train: "/home/students/mell/nn-project/data/train/train.small.tok"          # train data file path
+  src2trg_dev: "/home/students/mell/nn-project/data/dev/dev.tok.WMT.deen"     # dev data for src language to trg language translation
+  trg2src_dev: "/home/students/mell/nn-project/data/dev/dev.tok.WMT.ende"     # dev data for trg language to src language translation
+  src2trg_test: "/home/students/mell/nn-project/data/test/test.tok.WMT.deen"  # test data for src language to trg language translation
+  trg2src_test: "/home/students/mell/nn-project/data/test/test.tok.WMT.ende"  # test data for trg language to src language translation
+  level: "word"            # supported: "word", "bpe" and "char"
+  lowercase: False
+  max_sent_length: 30      # optionally set maximum sentence length
+  src_voc_min_freq: 3
+  trg_voc_min_freq: 3
+  src_voc_limit: 20000
+  trg_voc_limit: 20000
+  random_train_subset: -1  # selecting a random subset of the training data is not supported
+
+testing:
+  beam_size: 10
+  alpha: 1.0
+
+training:
+  random_seed: 42
+  optimizer: "adam"
+  adam_betas: [0.9, 0.98]
+  learning_rate: 0.0002
+  batch_type: "sentence"
+  batch_size: 50
+  eval_batch_type: "sentence"
+  eval_batch_size: 50
+  epochs: 1
+  validation_freq: 1000
+  logging_freq: 250
+  eval_metric: "bleu"
+  early_stopping_metric: "eval_metric"
+  model_dir: "/models/small_unsupervised"
+  overwrite: True
+  shuffle: True
+  use_cuda: False
+  keep_last_ckpts: 3
+  max_output_length: 30
+
+model:
+  architecture: "unsupervised-nmt"  # set unsupervised NMT architecture (default: encoder-decoder)
+  initializer: "xavier"
+  init_weight: 0.01
+  init_gain: 1.0
+  bias_initializer: "normal"
+  embed_initializer: "none"         # set embedding initialiser as none in order to keep pretrained mapped embeddings
+  tied_softmax: True                # for transformer models
+  encoder:
+    type: "transformer"
+    embeddings:
+      # freeze: do not set! Encoder embeddings will be automatically frozen, decoder embeddings are trained normally
+      embedding_dim: 300
+      # file for cross-lingual src language embeddings, in word2vec text format
+      embed_file: "/home/students/mell/nn-project/data/embeddings/fasttext/fasttext.mapped.de"
+    hidden_size: 300                # set equal to embedding dimensions
+    ff_size: 100                    # typically ff_size = 4 x hidden_size
+    dropout: 0.1
+    num_layers: 2
+    num_heads: 3
+    freeze: False
+  decoder:
+    type: "transformer"
+    embeddings:
+      embedding_dim: 300
+      # file for cross-lingual trg language embeddings, in word2vec text format
+      embed_file: "/home/students/mell/nn-project/data/embeddings/fasttext/fasttext.mapped.en"
+    hidden_size: 300
+    ff_size: 50                     # typically ff_size = 4 x hidden_size
+    dropout: 0.1
+    num_layers: 1
+    num_heads: 3
+    init_hidden: "last"
+    attention: "bahdanau"
+    freeze: False
